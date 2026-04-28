@@ -1,1 +1,8 @@
 .env
+coverage/
+*.lcov
+node_modules/
+tests/
+.env.test
+jest.config.js
+fix-tests.js

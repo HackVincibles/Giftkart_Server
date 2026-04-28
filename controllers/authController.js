@@ -42,10 +42,16 @@ const sendToken = (user, statusCode, res) => {
 exports.register = async (req, res) => {
     try {
         const { displayName, email, password } = req.body;
+        console.log('Registration attempt:', { displayName, email });
+
         let user = await User.findOne({ email });
-        if (user) return res.status(400).json({ message: 'User already exists' });
+        if (user) {
+            console.log('User already exists:', email);
+            return res.status(400).json({ message: 'User already exists' });
+        }
 
         user = await User.create({ displayName, email, password, authMethod: 'local' });
+        console.log('User created successfully:', user._id, user.email);
         sendToken(user, 201, res);
     } catch (err) {
         console.error('Registration Error:', err);
@@ -57,10 +63,17 @@ exports.register = async (req, res) => {
 exports.login = async (req, res) => {
     try {
         const { email, password } = req.body;
+        console.log('Login attempt:', { email });
+
         const user = await User.findOne({ email }).select('+password');
+        console.log('User found:', user ? user._id : 'No user found');
+
         if (!user || user.authMethod !== 'local' || !(await user.matchPassword(password))) {
+            console.log('Invalid credentials for:', email);
             return res.status(401).json({ message: 'Invalid credentials' });
         }
+
+        console.log('Login successful for:', user._id, user.email);
         sendToken(user, 200, res);
     } catch (err) {
         console.error('Login Error:', err);
