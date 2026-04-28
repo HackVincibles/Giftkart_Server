@@ -1,1 +1,5 @@
 .env
+coverage/
+*.lcov
+node_modules/
+tests/

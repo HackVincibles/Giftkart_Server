@@ -1,0 +1,15 @@
+{
+    "keep": {
+        "days": true,
+        "amount": 14
+    },
+    "auditLog": "C:\\Users\\Ayush Daharwal\\Desktop\\Gift_shop\\Giftkart_Server\\logs\\.29e5b26f8ce1f222e9d1c31bbc34635924f451ca-audit.json",
+    "files": [
+        {
+            "date": 1777370430710,
+            "name": "C:\\Users\\Ayush Daharwal\\Desktop\\Gift_shop\\Giftkart_Server\\logs\\combined-2026-04-28.log",
+            "hash": "abd370e93856c38c83371db01e2f9b57f63042eef068bfa405ae4ed849eae3e3"
+        }
+    ],
+    "hashType": "sha256"
+}
