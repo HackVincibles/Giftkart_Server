@@ -98,7 +98,7 @@ exports.requestWithdrawal = async (req, res) => {
             return res.status(400).json({ message: 'Insufficient balance' });
         }
 
-        if (!user.creatorProfile.bankDetails.accountNumber && !user.creatorProfile.bankDetails.upiId) {
+        if (!user.creatorProfile || !user.creatorProfile.bankDetails || (!user.creatorProfile.bankDetails.accountNumber && !user.creatorProfile.bankDetails.upiId)) {
             return res.status(400).json({ message: 'Please setup bank details or UPI ID first' });
         }
 

@@ -155,7 +155,7 @@ orderTrackingSchema.index({ 'courierDetails.trackingNumber': 1 });
 orderTrackingSchema.index({ createdAt: -1 });
 
 // Add tracking event on stage change
-orderTrackingSchema.pre('save', function(next) {
+orderTrackingSchema.pre('save', function() {
     if (this.isModified('currentStage')) {
         this.trackingEvents.push({
             stage: this.currentStage,
@@ -165,7 +165,6 @@ orderTrackingSchema.pre('save', function(next) {
         });
     }
     this.updatedAt = Date.now();
-    next();
 });
 
 // Method to add tracking event

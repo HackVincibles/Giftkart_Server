@@ -62,9 +62,20 @@ const OrderSchema = new mongoose.Schema({
     },
     status: {
         type: String,
-        enum: ['pending', 'paid', 'failed', 'shipped', 'delivered', 'refunded', 'cancelled'],
+        enum: [
+            'pending', 'confirmed', 'paid', 'processing',
+            'quality_check', 'packed', 'shipped',
+            'out_for_delivery', 'delivered',
+            'failed', 'refunded', 'cancelled'
+        ],
         default: 'pending'
     },
+    statusHistory: [{
+        status: String,
+        note: String,
+        updatedBy: { type: String, default: 'admin' },
+        updatedAt: { type: Date, default: Date.now }
+    }],
     customizationId: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Customization'
@@ -72,6 +83,14 @@ const OrderSchema = new mongoose.Schema({
     trackingNumber: String,
     estimatedDelivery: Date,
     actualDelivery: Date,
+    isScheduledGift: {
+        type: Boolean,
+        default: false
+    },
+    scheduleId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'AutoGiftCalendar'
+    },
     notes: String,
     createdAt: {
         type: Date,

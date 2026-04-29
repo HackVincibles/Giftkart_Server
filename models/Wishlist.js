@@ -65,9 +65,8 @@ wishlistSchema.index({ 'products.product': 1 });
 wishlistSchema.index({ isPublic: 1 });
 
 // Update timestamp on save
-wishlistSchema.pre('save', function(next) {
+wishlistSchema.pre('save', function() {
     this.updatedAt = Date.now();
-    next();
 });
 
 module.exports = mongoose.model('Wishlist', wishlistSchema);

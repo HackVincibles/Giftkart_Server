@@ -117,9 +117,8 @@ occasionDeliverySchema.index({ order: 1 });
 occasionDeliverySchema.index({ status: 1 });
 
 // Pre-save hook
-occasionDeliverySchema.pre('save', function(next) {
+occasionDeliverySchema.pre('save', function() {
     this.updatedAt = Date.now();
-    next();
 });
 
 // Method to check if delivery is on time

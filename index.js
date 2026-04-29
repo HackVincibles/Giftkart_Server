@@ -5,7 +5,6 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const helmet = require('helmet');
-const xss = require('xss-clean');
 const hpp = require('hpp');
 const mongoSanitize = require('express-mongo-sanitize');
 const errorHandler = require('./middleware/errorHandler');
@@ -28,7 +27,6 @@ if (process.env.NODE_ENV !== 'test') {
 
 // Security middleware
 app.use(helmet());
-app.use(xss());
 app.use(hpp());
 app.use(mongoSanitize());
 
@@ -50,6 +48,9 @@ app.use(logApiRequest);
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/seller-auth', require('./routes/sellerAuth'));
 app.use('/api/seller-products', require('./routes/sellerProducts'));
+app.use('/api/seller-orders', require('./routes/sellerOrders'));
+app.use('/api/seller-analytics', require('./routes/sellerAnalytics'));
+app.use('/api/seller-ai', require('./routes/sellerAi'));
 app.use('/api/profile', require('./routes/profile'));
 app.use('/api/wallet', require('./routes/wallet'));
 app.use('/api/cart', require('./routes/cart'));
@@ -69,7 +70,7 @@ app.use('/api/admin', require('./routes/admin'));
 app.use('/api/analytics', require('./routes/analytics'));
 app.use('/api/webhooks/n8n', require('./services/n8n_webhooks'));
 app.use('/api/ai', require('./routes/ai'));
-app.use('/api/ai-recommendations', require('./routes/aiRecommendations'));
+app.post('/api/ai/direct-test', (req, res) => res.json({ success: true, message: 'Server is receiving requests!' }));
 app.use('/api/chatbot', require('./routes/chatbot'));
 app.use('/api/custom-gifts', require('./routes/customGifts'));
 app.use('/api/creator-dashboard', require('./routes/creatorDashboard'));
@@ -84,7 +85,7 @@ app.use('/api/search', require('./routes/search'));
 app.use(logError);
 app.use(errorHandler);
 
-// Basic health check
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.get('/', (req, res) => {
     res.send('GiftCart API is running (Manual JWT Mode)...');
 });

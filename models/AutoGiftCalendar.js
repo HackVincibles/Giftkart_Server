@@ -196,7 +196,7 @@ autoGiftCalendarSchema.index({ status: 1 });
 autoGiftCalendarSchema.index({ 'deliveryAddress.pincode': 1 });
 
 // Calculate delivery estimation before save
-autoGiftCalendarSchema.pre('save', function(next) {
+autoGiftCalendarSchema.pre('save', function() {
     if (this.isModified('deliveryAddress.pincode') || this.isNew) {
         // Calculate estimated delivery days based on pincode
         // This would typically integrate with a shipping API
@@ -226,7 +226,6 @@ autoGiftCalendarSchema.pre('save', function(next) {
         };
     }
     this.updatedAt = Date.now();
-    next();
 });
 
 module.exports = mongoose.model('AutoGiftCalendar', autoGiftCalendarSchema);

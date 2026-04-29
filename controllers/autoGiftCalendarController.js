@@ -1,6 +1,7 @@
 const AutoGiftCalendar = require('../models/AutoGiftCalendar');
 const Product = require('../models/Product');
 const { giftMindReader } = require('../services/ai');
+const notificationService = require('../services/notificationService');
 
 // Create auto-gift calendar entry
 const createAutoGift = async (req, res) => {
@@ -34,6 +35,11 @@ const createAutoGift = async (req, res) => {
             notes,
             status: 'active'
         });
+
+        await autoGift.save();
+
+        // Send Notification
+        await notificationService.notifyScheduleAdded(req.user._id, recipient.name || recipient, occasion);
 
         res.status(201).json({
             success: true,

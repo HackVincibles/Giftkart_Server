@@ -155,15 +155,14 @@ ProductSchema.index({ 'emotionalContext.emotion': 1 });
 ProductSchema.index({ 'targetAudience.relationship': 1 });
 
 // Update average ratings before saving
-ProductSchema.pre('save', function(next) {
-    if (this.reviews.length > 0) {
+ProductSchema.pre('save', function() {
+    if (this.reviews && this.reviews.length > 0) {
         const totalRating = this.reviews.reduce((sum, review) => sum + review.rating, 0);
         const totalEmotional = this.reviews.reduce((sum, review) => sum + review.emotionalImpactScore, 0);
         this.averageRating = totalRating / this.reviews.length;
         this.emotionalImpactAverage = totalEmotional / this.reviews.length;
     }
     this.updatedAt = Date.now();
-    next();
 });
 
 module.exports = mongoose.model('Product', ProductSchema);

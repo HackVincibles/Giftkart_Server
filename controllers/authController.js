@@ -52,6 +52,10 @@ exports.register = async (req, res) => {
 
         user = await User.create({ displayName, email, password, authMethod: 'local' });
         console.log('User created successfully:', user._id, user.email);
+        
+        // Initialize Wallet for new user
+        await Wallet.create({ user: user._id });
+        
         sendToken(user, 201, res);
     } catch (err) {
         console.error('Registration Error:', err);
@@ -135,12 +139,60 @@ exports.googleCallback = async (req, res) => {
 
         if (user.role === 'unassigned') {
             res.redirect(`${process.env.CLIENT_URL}/select-role`);
+        } else if (user.role === 'admin') {
+            res.redirect(`${process.env.CLIENT_URL}/admin`);
+        } else if (user.role === 'creator') {
+            res.redirect(`${process.env.CLIENT_URL}/creator-dashboard`);
         } else {
             res.redirect(`${process.env.CLIENT_URL}/dashboard`);
         }
     } catch (err) {
         console.error('Google Auth Error:', err);
         res.redirect(`${process.env.CLIENT_URL}/login?error=auth_failed`);
+    }
+};
+
+// @desc    Client-side Google Auth (POST token)
+exports.googleLoginClient = async (req, res) => {
+    try {
+        const { token, role } = req.body;
+        const client = getOAuth2Client();
+        
+        const ticket = await client.verifyIdToken({
+            idToken: token,
+            audience: process.env.GOOGLE_CLIENT_ID
+        });
+        
+        const payload = ticket.getPayload();
+        
+        let user = await User.findOne({ email: payload.email });
+        
+        if (user) {
+            user.googleId = payload.sub;
+            user.avatar = payload.picture;
+            // Only update role if it's currently unassigned and a new role is requested
+            if (user.role === 'unassigned' && role) {
+                user.role = role;
+            }
+            await user.save();
+        } else {
+            user = await User.create({
+                googleId: payload.sub,
+                email: payload.email,
+                displayName: payload.name,
+                avatar: payload.picture,
+                authMethod: 'google',
+                role: role || 'buyer' // Default to buyer or selected role
+            });
+            
+            // Initialize Wallet for new user
+            await Wallet.create({ user: user._id });
+        }
+        
+        sendToken(user, 200, res);
+    } catch (err) {
+        console.error('Google Auth Error:', err);
+        res.status(401).json({ message: 'Invalid Google token' });
     }
 };
 

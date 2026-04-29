@@ -1,0 +1,15 @@
+{
+    "keep": {
+        "days": true,
+        "amount": 14
+    },
+    "auditLog": "C:\\Users\\adity\\Desktop\\gk\\Giftkart_Server\\logs\\.b512b1ed0196dc080e39df0b04a6ed0791976071-audit.json",
+    "files": [
+        {
+            "date": 1777404773229,
+            "name": "C:\\Users\\adity\\Desktop\\gk\\Giftkart_Server\\logs\\error-2026-04-29.log",
+            "hash": "18c083fcb9036b54b10675a6d741d07f730ef4c45653903ed6b15f99465304cf"
+        }
+    ],
+    "hashType": "sha256"
+}

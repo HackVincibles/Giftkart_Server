@@ -4,12 +4,17 @@ const WithdrawalSchema = new mongoose.Schema({
     user: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User',
-        required: true
+        required: false
+    },
+    seller: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Seller',
+        required: false
     },
     wallet: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Wallet',
-        required: true
+        required: false
     },
     amount: {
         type: Number,

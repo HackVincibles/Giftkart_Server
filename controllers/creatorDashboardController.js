@@ -23,9 +23,23 @@ const getDashboard = async (req, res) => {
             });
         }
 
+        const sellerInfo = await Seller.findById(req.seller._id);
+
+        const pendingOrders = dashboard.orderQueue.filter(o => o.status === 'new' || o.status === 'in-progress').length;
+        const totalEarnings = dashboard.earnings.available; // or sellerInfo.wallet.balance
+        const totalOrdersSold = sellerInfo ? sellerInfo.stats.totalOrders : dashboard.performance.completedOrders;
+        const totalOrdersAmount = sellerInfo ? sellerInfo.stats.totalRevenue : dashboard.earnings.total;
+
         res.json({
             success: true,
-            data: dashboard
+            data: {
+                ...dashboard.toObject(),
+                pendingOrders,
+                totalEarnings,
+                totalOrdersSold,
+                totalOrdersAmount,
+                rating: sellerInfo ? sellerInfo.averageRating : 0
+            }
         });
     } catch (error) {
         res.status(500).json({

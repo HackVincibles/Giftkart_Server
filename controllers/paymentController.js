@@ -4,12 +4,177 @@ const Order = require('../models/Order');
 const Wallet = require('../models/Wallet');
 const Transaction = require('../models/Transaction');
 const Product = require('../models/Product');
+const Notification = require('../models/Notification');
+const OrderTracking = require('../models/OrderTracking');
+const notificationService = require('../services/notificationService');
 
 const getRazorpayInstance = () => {
     return new Razorpay({
         key_id: process.env.RAZORPAY_KEY_ID,
         key_secret: process.env.RAZORPAY_KEY_SECRET
     });
+};
+
+// Cancel order and refund to wallet
+exports.cancelOrder = async (req, res) => {
+    try {
+        const { orderId } = req.params;
+        const order = await Order.findById(orderId);
+
+        if (!order) {
+            return res.status(404).json({ success: false, message: 'Order not found' });
+        }
+
+        // Check authorization
+        if (order.buyer.toString() !== req.user._id.toString() && req.user.role !== 'admin') {
+            return res.status(403).json({ success: false, message: 'Not authorized' });
+        }
+
+        // Only allow cancellation if not already shipped or cancelled
+        if (['shipped', 'delivered', 'cancelled', 'refunded'].includes(order.status)) {
+            return res.status(400).json({ 
+                success: false, 
+                message: `Order cannot be cancelled in current status: ${order.status}` 
+            });
+        }
+
+        const refundAmount = order.amount;
+        order.status = 'cancelled';
+        order.deliveryStatus = 'cancelled';
+        await order.save();
+
+        // Update tracking
+        const tracking = await OrderTracking.findOne({ order: orderId });
+        if (tracking) {
+            tracking.currentStage = 'cancelled';
+            await tracking.save();
+        }
+
+        // Sync back to schedule if it was a scheduled gift
+        if (order.isScheduledGift && order.scheduleId) {
+            const AutoGiftCalendar = require('../models/AutoGiftCalendar');
+            await AutoGiftCalendar.findByIdAndUpdate(order.scheduleId, {
+                orderId: null,
+                orderStatus: 'pending',
+                paymentStatus: 'refunded'
+            });
+        }
+
+        // Refund to wallet
+        const wallet = await Wallet.findOneAndUpdate(
+            { user: order.buyer },
+            { $inc: { balance: refundAmount } },
+            { upsert: true, new: true }
+        );
+
+        // Create transaction record
+        await Transaction.create({
+            wallet: wallet._id,
+            user: order.buyer,
+            type: 'refund',
+            amount: refundAmount,
+            status: 'completed',
+            description: `Refund for cancelled order #${orderId.toString().slice(-6).toUpperCase()}`,
+            orderId: order._id
+        });
+
+        // Create notification
+        await Notification.create({
+            user: order.buyer,
+            type: 'order_cancelled',
+            title: 'Order Cancelled & Refunded',
+            message: `Order #${orderId.toString().slice(-6).toUpperCase()} was cancelled. ₹${refundAmount} has been credited to your wallet.`,
+            relatedOrder: order._id,
+            priority: 'medium'
+        });
+
+        res.json({
+            success: true,
+            message: 'Order cancelled and refund credited to wallet',
+            balance: wallet.balance
+        });
+    } catch (error) {
+        console.error('Cancel Order Error:', error);
+        res.status(500).json({ success: false, message: 'Failed to cancel order' });
+    }
+};
+
+module.exports = exports;
+
+// Helper function to handle post-payment order completion tasks
+const completeOrderTasks = async (order) => {
+    try {
+        const OrderTracking = require('../models/OrderTracking');
+        const CreatorDashboard = require('../models/CreatorDashboard');
+        const Product = require('../models/Product');
+
+        // 1. Create order tracking entry
+        await OrderTracking.create({
+            order: order._id,
+            currentStage: 'confirmed',
+            deliveryAddress: {
+                name: order.shippingAddress?.name || 'Customer',
+                address: `${order.shippingAddress?.street || ''}, ${order.shippingAddress?.city || ''}`,
+                city: order.shippingAddress?.city || '',
+                state: order.shippingAddress?.state || '',
+                pincode: order.shippingAddress?.pincode || ''
+            }
+        });
+
+        // 2. Add to Creator Dashboards for all sellers involved
+        const sellers = new Set();
+        for (const item of order.products) {
+            const product = await Product.findById(item.product);
+            if (product && product.creator) {
+                sellers.add(product.creator.toString());
+                
+                await CreatorDashboard.findOneAndUpdate(
+                    { creator: product.creator },
+                    { 
+                        $push: { 
+                            orderQueue: {
+                                order: order._id,
+                                status: 'new',
+                                priority: 'normal',
+                                assignedAt: new Date(),
+                                userInputs: {
+                                    description: `Order for ${product.name} (Qty: ${item.quantity})`
+                                }
+                            }
+                        },
+                        $inc: { 'performance.totalOrders': 1 },
+                        $set: { lastUpdated: new Date() }
+                    },
+                    { upsert: true }
+                );
+            }
+        }
+
+        // 3. Update AutoGiftCalendar if it's a scheduled gift
+        if (order.isScheduledGift && order.scheduleId) {
+            const AutoGiftCalendar = require('../models/AutoGiftCalendar');
+            await AutoGiftCalendar.findByIdAndUpdate(order.scheduleId, {
+                orderId: order._id,
+                orderStatus: 'ordered',
+                paymentStatus: 'paid'
+            });
+        }
+
+        // 4. Create success notification
+        const Notification = require('../models/Notification');
+        await Notification.create({
+            user: order.buyer,
+            type: 'order_status',
+            title: 'Order Confirmed! 🎁',
+            message: `Your order #${order._id.toString().slice(-6).toUpperCase()} has been successfully placed.`,
+            metadata: { orderId: order._id }
+        });
+        
+        return true;
+    } catch (err) {
+        console.error('Error in completeOrderTasks:', err);
+        return false;
+    }
 };
 
 // Create payment order for products
@@ -19,7 +184,9 @@ exports.createOrder = async (req, res) => {
             products, // Array of { productId, quantity }
             shippingAddress,
             paymentMethod, // 'razorpay' or 'wallet'
-            useWalletBalance = false
+            useWalletBalance = false,
+            isScheduledGift = false,
+            scheduleId = null
         } = req.body;
 
         // Calculate total amount
@@ -35,12 +202,12 @@ exports.createOrder = async (req, res) => {
                 });
             }
 
-            const itemTotal = product.pricing.base * item.quantity;
+            const itemTotal = product.basePrice * item.quantity;
             totalAmount += itemTotal;
             productDetails.push({
                 product: product._id,
                 quantity: item.quantity,
-                price: product.pricing.base,
+                price: product.basePrice,
                 name: product.name
             });
         }
@@ -85,7 +252,9 @@ exports.createOrder = async (req, res) => {
             shippingAddress,
             status: razorpayOrder ? 'pending' : 'paid',
             paymentMethod: razorpayOrder ? 'razorpay' : 'wallet',
-            products: productDetails
+            products: productDetails,
+            isScheduledGift,
+            scheduleId
         });
 
         // If using wallet, create transaction
@@ -103,6 +272,11 @@ exports.createOrder = async (req, res) => {
                 description: `Order ${newOrder._id}`,
                 orderId: newOrder._id
             });
+        }
+
+        // IF WALLET ONLY: Complete tasks immediately
+        if (razorpayAmount === 0) {
+            await completeOrderTasks(newOrder);
         }
 
         res.status(201).json({
@@ -152,6 +326,23 @@ exports.verifyPayment = async (req, res) => {
         order.deliveryStatus = 'awaiting_creator';
         await order.save();
 
+        // Update inventory/stock count for each product
+        for (const item of order.products) {
+            await Product.findByIdAndUpdate(item.product, {
+                $inc: { 'inventory.stockCount': -item.quantity }
+            });
+        }
+
+        // Create notification
+        await Notification.create({
+            user: order.buyer,
+            type: 'order_confirmed',
+            title: 'Order Confirmed! 🎁',
+            message: `Your order #${order._id.toString().slice(-6).toUpperCase()} has been successfully placed.`,
+            relatedOrder: order._id,
+            priority: 'high'
+        });
+
         // Create transaction record
         await Transaction.create({
             user: order.buyer,
@@ -163,6 +354,13 @@ exports.verifyPayment = async (req, res) => {
             razorpayPaymentId: razorpay_payment_id,
             orderId: order._id
         });
+
+        // Send Professional Notifications
+        await notificationService.notifyPaymentSuccess(order.buyer, order.amount, order._id);
+        await notificationService.notifyOrderPlaced(order.buyer, order._id, order.amount);
+
+        // Complete post-payment tasks (tracking, notifications, schedule sync)
+        await completeOrderTasks(order);
 
         res.status(200).json({ 
             success: true, 

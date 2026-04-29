@@ -17,10 +17,15 @@ const createProduct = async (req, res) => {
     try {
         const seller = await Seller.findById(req.seller._id);
         
+        // Strict verification gate — only admin-approved sellers can list products
         if (!seller || seller.verificationStatus !== 'verified') {
             return res.status(403).json({
                 success: false,
-                message: 'Seller not verified'
+                message: seller?.verificationStatus === 'pending'
+                    ? 'Your seller account is pending admin approval. You will be notified once verified.'
+                    : seller?.verificationStatus === 'rejected'
+                    ? 'Your seller account has been rejected. Please contact support.'
+                    : 'Seller account not verified. Contact admin.'
             });
         }
 
@@ -149,6 +154,34 @@ const getSellerProducts = async (req, res) => {
     }
 };
 
+// Get single product details
+const getProduct = async (req, res) => {
+    try {
+        const { productId } = req.params;
+        const seller = await Seller.findById(req.seller._id);
+
+        const product = await Product.findOne({ _id: productId, creator: seller._id });
+
+        if (!product) {
+            return res.status(404).json({
+                success: false,
+                message: 'Product not found'
+            });
+        }
+
+        res.json({
+            success: true,
+            data: product
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            message: 'Error fetching product details',
+            error: error.message
+        });
+    }
+};
+
 // Delete product
 const deleteProduct = async (req, res) => {
     try {
@@ -232,6 +265,7 @@ module.exports = {
     createProduct,
     updateProduct,
     getSellerProducts,
+    getProduct,
     deleteProduct,
     getCommissionInfo,
     calculatePricePreview

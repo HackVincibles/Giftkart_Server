@@ -358,4 +358,31 @@ router.get('/search/advanced', searchLimiter, async (req, res) => {
     }
 });
 
+// Get Social Wishlist (Trending Products across all users)
+router.get('/social/wishlist', generalLimiter, async (req, res) => {
+    try {
+        // Aggregate products sorted by a popularity score
+        // Score = (Orders * 2) + WishlistCount
+        const products = await Product.find({ isActive: true })
+            .populate('creator', 'businessName email isVerified')
+            .sort({ 
+                'popularity.orders': -1, 
+                'popularity.wishlistCount': -1 
+            })
+            .limit(40);
+
+        res.json({
+            success: true,
+            count: products.length,
+            data: products
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            message: 'Error fetching social wishlist',
+            error: error.message
+        });
+    }
+});
+
 module.exports = router;

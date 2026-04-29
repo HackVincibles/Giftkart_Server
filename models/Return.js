@@ -150,7 +150,7 @@ returnSchema.index({ status: 1 });
 returnSchema.index({ createdAt: -1 });
 
 // Add timeline entry on status change
-returnSchema.pre('save', function(next) {
+returnSchema.pre('save', function() {
     if (this.isModified('status')) {
         this.timeline.push({
             status: this.status,
@@ -159,7 +159,6 @@ returnSchema.pre('save', function(next) {
         });
     }
     this.updatedAt = Date.now();
-    next();
 });
 
 module.exports = mongoose.model('Return', returnSchema);

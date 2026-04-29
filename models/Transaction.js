@@ -9,7 +9,12 @@ const TransactionSchema = new mongoose.Schema({
     user: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User',
-        required: true
+        required: false
+    },
+    seller: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Seller',
+        required: false
     },
     type: {
         type: String,

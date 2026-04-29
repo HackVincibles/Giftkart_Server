@@ -138,7 +138,7 @@ grievanceSchema.index({ category: 1 });
 grievanceSchema.index({ createdAt: -1 });
 
 // Set SLA on creation
-grievanceSchema.pre('save', function(next) {
+grievanceSchema.pre('save', function() {
     if (this.isNew) {
         // Set response SLA (24 hours)
         this.sla.responseDue = new Date(Date.now() + 24 * 60 * 60 * 1000);
@@ -146,7 +146,6 @@ grievanceSchema.pre('save', function(next) {
         this.sla.resolutionDue = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
     }
     this.updatedAt = Date.now();
-    next();
 });
 
 module.exports = mongoose.model('Grievance', grievanceSchema);

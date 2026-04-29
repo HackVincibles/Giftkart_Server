@@ -6,6 +6,13 @@ const Transaction = require('../models/Transaction');
 const Grievance = require('../models/Grievance');
 const Coupon = require('../models/Coupon');
 const AutoGiftCalendar = require('../models/AutoGiftCalendar');
+const AdminWallet = require('../models/AdminWallet');
+const AdminNotification = require('../models/AdminNotification');
+const Return = require('../models/Return');
+const Withdrawal = require('../models/Withdrawal');
+const Wallet = require('../models/Wallet');
+
+const PLATFORM_COMMISSION_RATE = 4; // 4% on every order
 
 // Get dashboard statistics
 const getDashboardStats = async (req, res) => {
@@ -436,15 +443,444 @@ const updateSystemSettings = async (req, res) => {
     }
 };
 
+// ─── Admin Notifications ───────────────────────────────────────
+
+const getAdminNotifications = async (req, res) => {
+    try {
+        const { unreadOnly } = req.query;
+        const filter = unreadOnly === 'true' ? { isRead: false } : {};
+        const notifications = await AdminNotification.find(filter)
+            .sort({ createdAt: -1 })
+            .limit(50);
+        const unreadCount = await AdminNotification.countDocuments({ isRead: false });
+        res.json({ success: true, data: { notifications, unreadCount } });
+    } catch (error) {
+        res.status(500).json({ success: false, message: 'Error fetching notifications', error: error.message });
+    }
+};
+
+const markNotificationRead = async (req, res) => {
+    try {
+        const { notificationId } = req.params;
+        if (notificationId === 'all') {
+            await AdminNotification.updateMany({}, { isRead: true });
+        } else {
+            await AdminNotification.findByIdAndUpdate(notificationId, { isRead: true });
+        }
+        res.json({ success: true, message: 'Marked as read' });
+    } catch (error) {
+        res.status(500).json({ success: false, message: 'Error marking notification', error: error.message });
+    }
+};
+
+// ─── Admin Wallet & Commission ────────────────────────────────
+
+const getAdminWallet = async (req, res) => {
+    try {
+        let wallet = await AdminWallet.findOne();
+        if (!wallet) wallet = await AdminWallet.create({});
+        res.json({ success: true, data: wallet });
+    } catch (error) {
+        res.status(500).json({ success: false, message: 'Error fetching admin wallet', error: error.message });
+    }
+};
+
+const recordCommission = async (req, res) => {
+    try {
+        const { orderId, orderAmount, sellerId } = req.body;
+        const commissionAmount = Math.round((orderAmount * PLATFORM_COMMISSION_RATE) / 100);
+
+        let wallet = await AdminWallet.findOne();
+        if (!wallet) wallet = await AdminWallet.create({});
+
+        wallet.totalCommissionEarned += commissionAmount;
+        wallet.availableBalance += commissionAmount;
+        wallet.transactions.push({
+            orderId, sellerId, orderAmount,
+            commissionRate: PLATFORM_COMMISSION_RATE,
+            commissionAmount,
+            type: 'commission',
+            description: `4% commission on order #${orderId?.toString().slice(-6).toUpperCase()}`
+        });
+        await wallet.save();
+
+        res.json({ success: true, data: { commissionAmount, wallet } });
+    } catch (error) {
+        res.status(500).json({ success: false, message: 'Error recording commission', error: error.message });
+    }
+};
+
+// ─── Order Status / Transportation ───────────────────────────
+
+const ORDER_STATUS_FLOW = [
+    'pending', 'confirmed', 'processing', 'quality_check',
+    'packed', 'shipped', 'out_for_delivery', 'delivered', 'cancelled'
+];
+
+const updateOrderStatus = async (req, res) => {
+    try {
+        const { orderId } = req.params;
+        const { status, trackingNumber, note } = req.body;
+
+        const validStatuses = [
+            'pending', 'confirmed', 'paid', 'processing',
+            'quality_check', 'packed', 'shipped',
+            'out_for_delivery', 'delivered',
+            'failed', 'refunded', 'cancelled'
+        ];
+
+        if (!validStatuses.includes(status)) {
+            return res.status(400).json({
+                success: false,
+                message: `Invalid status. Valid values: ${validStatuses.join(', ')}`
+            });
+        }
+
+        const order = await Order.findById(orderId);
+        if (!order) return res.status(404).json({ success: false, message: 'Order not found' });
+
+        const previousStatus = order.status;
+
+        // Build update object
+        const updateData = { status, updatedAt: new Date() };
+        if (trackingNumber) updateData.trackingNumber = trackingNumber;
+
+        const historyEntry = {
+            status,
+            note: note || `Status updated to "${status}" by admin`,
+            updatedBy: 'admin',
+            updatedAt: new Date()
+        };
+
+        // Use direct update to avoid pre-save hook interference
+        const updatedOrder = await Order.findByIdAndUpdate(
+            orderId,
+            {
+                $set: updateData,
+                $push: { statusHistory: historyEntry }
+            },
+            { new: true, runValidators: true }
+        );
+
+        // Auto-record 4% commission and credit seller when order is delivered
+        if (status === 'delivered' && previousStatus !== 'delivered') {
+            try {
+                // Fetch full order with product details
+                const populatedOrder = await Order.findById(orderId).populate('products.product');
+                if (!populatedOrder) throw new Error('Order not found for processing');
+
+                let totalOrderCommission = 0;
+
+                for (const item of populatedOrder.products) {
+                    const product = item.product;
+                    if (!product) continue;
+
+                    const itemTotal = item.price * item.quantity;
+                    // Calculate 4% platform commission
+                    const commissionAmount = Math.round((itemTotal * PLATFORM_COMMISSION_RATE) / 100);
+                    const creatorEarnings = itemTotal - commissionAmount;
+                    
+                    totalOrderCommission += commissionAmount;
+
+                    if (product.creator) {
+                        // 1. Update Seller model (Primary wallet and stats)
+                        await Seller.findByIdAndUpdate(product.creator, {
+                            $inc: {
+                                'wallet.balance': creatorEarnings,
+                                'wallet.totalEarned': creatorEarnings,
+                                'stats.totalRevenue': creatorEarnings,
+                                'stats.totalOrders': item.quantity
+                            }
+                        });
+
+                        // 2. Update Product popularity
+                        await Product.findByIdAndUpdate(product._id, {
+                            $inc: { 'popularity.orders': item.quantity }
+                        });
+
+                        // 3. Update CreatorDashboard earnings
+                        const CreatorDashboard = require('../models/CreatorDashboard');
+                        await CreatorDashboard.findOneAndUpdate(
+                            { creator: product.creator },
+                            { 
+                                $inc: { 
+                                    'earnings.total': creatorEarnings,
+                                    'earnings.available': creatorEarnings,
+                                    'performance.completedOrders': 1
+                                },
+                                $set: { lastUpdated: new Date() }
+                            },
+                            { upsert: true }
+                        );
+
+                        // Create transaction record for seller
+                        await Transaction.create({
+                            seller: product.creator,
+                            type: 'deposit',
+                            amount: creatorEarnings,
+                            status: 'completed',
+                            description: `Earnings from Order #${order._id.toString().slice(-6).toUpperCase()}`,
+                            orderId: order._id
+                        });
+
+                        // 4. Also credit the global User Wallet (if it exists for the seller's user account)
+                        // This allows the seller to withdraw money from their main profile
+                        const sellerDoc = await Seller.findById(product.creator);
+                        if (sellerDoc && sellerDoc.email) {
+                            const userDoc = await User.findOne({ email: sellerDoc.email });
+                            if (userDoc) {
+                                await Wallet.findOneAndUpdate(
+                                    { user: userDoc._id },
+                                    { $inc: { balance: creatorEarnings } },
+                                    { upsert: true }
+                                );
+                                
+                                // Record transaction for the seller
+                                await Transaction.create({
+                                    user: userDoc._id,
+                                    type: 'earnings',
+                                    amount: creatorEarnings,
+                                    status: 'completed',
+                                    description: `Earnings from order #${orderId.toString().slice(-6).toUpperCase()}`,
+                                    orderId: orderId
+                                });
+                            }
+                        }
+                    }
+                }
+                
+                // 5. Credit Admin Wallet with total commission from this order
+                if (totalOrderCommission > 0) {
+                    let adminWallet = await AdminWallet.findOne();
+                    if (!adminWallet) adminWallet = await AdminWallet.create({});
+                    
+                    adminWallet.totalCommissionEarned += totalOrderCommission;
+                    adminWallet.availableBalance += totalOrderCommission;
+                    adminWallet.transactions.push({
+                        orderId: populatedOrder._id,
+                        orderAmount: populatedOrder.amount,
+                        commissionRate: PLATFORM_COMMISSION_RATE,
+                        commissionAmount: totalOrderCommission,
+                        type: 'commission',
+                        description: `4% commission on delivered order #${orderId.toString().slice(-6).toUpperCase()}`
+                    });
+                    await adminWallet.save();
+                }
+
+            } catch (commErr) {
+                console.error('Commission/Seller wallet crediting failed:', commErr);
+            }
+        }
+
+        res.json({
+            success: true,
+            message: `Order status updated to "${status}"`,
+            data: { orderId, previousStatus, newStatus: status }
+        });
+    } catch (error) {
+        console.error('updateOrderStatus error:', error);
+        res.status(500).json({ success: false, message: 'Error updating order status', error: error.message });
+    }
+};
+
+// ─── Reject Seller ────────────────────────────────────────────
+
+const rejectSeller = async (req, res) => {
+    try {
+        const { sellerId } = req.params;
+        const { reason } = req.body;
+        const seller = await Seller.findByIdAndUpdate(
+            sellerId,
+            { verificationStatus: 'rejected', isVerified: false, rejectionReason: reason || 'Did not meet platform requirements' },
+            { new: true }
+        );
+        if (!seller) return res.status(404).json({ success: false, message: 'Seller not found' });
+        res.json({ success: true, message: 'Seller rejected', data: seller });
+    } catch (error) {
+        res.status(500).json({ success: false, message: 'Error rejecting seller', error: error.message });
+    }
+};
+
+// ─── Block / Unblock User ────────────────────────────────────
+
+const blockUser = async (req, res) => {
+    try {
+        const { userId } = req.params;
+        const { reason } = req.body;
+
+        // Prevent admin from blocking themselves
+        if (userId === req.user._id.toString()) {
+            return res.status(400).json({ success: false, message: 'You cannot block yourself.' });
+        }
+
+        const user = await User.findById(userId);
+        if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+        if (user.role === 'admin') {
+            return res.status(400).json({ success: false, message: 'Cannot block another admin.' });
+        }
+
+        await User.findByIdAndUpdate(userId, {
+            isBlocked: true,
+            blockedAt: new Date(),
+            blockReason: reason || 'Violated platform terms of service'
+        });
+
+        res.json({ success: true, message: `User "${user.displayName}" has been blocked.` });
+    } catch (error) {
+        res.status(500).json({ success: false, message: 'Error blocking user', error: error.message });
+    }
+};
+
+const unblockUser = async (req, res) => {
+    try {
+        const { userId } = req.params;
+        const user = await User.findById(userId);
+        if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+
+        await User.findByIdAndUpdate(userId, {
+            isBlocked: false,
+            blockedAt: null,
+            blockReason: null
+        });
+
+        res.json({ success: true, message: `User "${user.displayName}" has been unblocked.` });
+    } catch (error) {
+        res.status(500).json({ success: false, message: 'Error unblocking user', error: error.message });
+    }
+};
+
+
+// ─── Admin Withdrawals ───────────────────────────────────────
+
+const getAllWithdrawals = async (req, res) => {
+    try {
+        const { status, page = 1, limit = 20 } = req.query;
+        const filter = {};
+        if (status) filter.status = status;
+
+        const withdrawals = await Withdrawal.find(filter)
+            .populate('user', 'displayName email role')
+            .populate('seller', 'businessName ownerName email')
+            .sort({ createdAt: -1 })
+            .skip((page - 1) * limit)
+            .limit(parseInt(limit));
+
+        const total = await Withdrawal.countDocuments(filter);
+
+        res.json({
+            success: true,
+            data: {
+                withdrawals,
+                pagination: {
+                    total,
+                    pages: Math.ceil(total / limit),
+                    page: parseInt(page)
+                }
+            }
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+const updateWithdrawalStatus = async (req, res) => {
+    try {
+        const { withdrawalId } = req.params;
+        const { status, adminNote } = req.body;
+
+        const withdrawal = await Withdrawal.findById(withdrawalId);
+
+        if (!withdrawal) {
+            return res.status(404).json({ success: false, message: 'Withdrawal request not found' });
+        }
+
+        if (withdrawal.status !== 'pending' && withdrawal.status !== 'processing') {
+            return res.status(400).json({ success: false, message: `Cannot update withdrawal from status ${withdrawal.status}` });
+        }
+
+        withdrawal.status = status;
+        if (adminNote) withdrawal.adminNote = adminNote;
+        await withdrawal.save();
+
+        // If completed, update the transaction
+        if (status === 'completed' && withdrawal.transactionId) {
+            await Transaction.findByIdAndUpdate(withdrawal.transactionId, { status: 'completed' });
+        }
+
+        // If rejected, refund the wallet balance
+        if (status === 'rejected') {
+            if (withdrawal.seller) {
+                await Seller.findByIdAndUpdate(withdrawal.seller, {
+                    $inc: { 'wallet.balance': withdrawal.amount, 'wallet.pendingWithdrawals': -withdrawal.amount }
+                });
+            } else if (withdrawal.user) {
+                await Wallet.findOneAndUpdate({ user: withdrawal.user }, {
+                    $inc: { balance: withdrawal.amount }
+                });
+            }
+            
+            if (withdrawal.transactionId) {
+                await Transaction.findByIdAndUpdate(withdrawal.transactionId, { status: 'failed', description: 'Withdrawal rejected - Refunded' });
+            }
+        }
+
+        res.json({ success: true, message: `Withdrawal ${status} successfully` });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+const adminWithdrawCommission = async (req, res) => {
+    try {
+        const { amount, bankDetails } = req.body;
+        
+        let wallet = await AdminWallet.findOne();
+        if (!wallet) {
+            return res.status(404).json({ success: false, message: 'Admin wallet not found' });
+        }
+
+        if (wallet.availableBalance < amount) {
+            return res.status(400).json({ success: false, message: 'Insufficient commission balance' });
+        }
+
+        wallet.availableBalance -= amount;
+        wallet.transactions.push({
+            orderAmount: amount, 
+            commissionAmount: amount,
+            type: 'withdrawal',
+            description: `Commission withdrawn to bank account (${bankDetails?.accountNumber?.slice(-4) || 'Unknown'})`,
+            createdAt: new Date()
+        });
+
+        await wallet.save();
+
+        res.json({ success: true, message: 'Commission withdrawn successfully', data: wallet });
+    } catch (error) {
+        res.status(500).json({ success: false, message: 'Error withdrawing commission', error: error.message });
+    }
+};
+
 module.exports = {
     getDashboardStats,
     getAllUsers,
     getAllSellers,
     verifySeller,
     suspendSeller,
+    rejectSeller,
     getAllOrders,
     getAllGrievances,
     resolveGrievance,
     getPlatformAnalytics,
-    updateSystemSettings
+    updateSystemSettings,
+    getAdminNotifications,
+    markNotificationRead,
+    getAdminWallet,
+    recordCommission,
+    updateOrderStatus,
+    ORDER_STATUS_FLOW,
+    blockUser,
+    unblockUser,
+    getAllWithdrawals,
+    updateWithdrawalStatus,
+    adminWithdrawCommission
 };

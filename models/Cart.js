@@ -83,9 +83,8 @@ const cartSchema = new mongoose.Schema({
 cartSchema.index({ 'items.product': 1 });
 
 // Update timestamp on save
-cartSchema.pre('save', function(next) {
+cartSchema.pre('save', function() {
     this.updatedAt = Date.now();
-    next();
 });
 
 // Calculate total

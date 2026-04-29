@@ -1,5 +1,6 @@
 const Wishlist = require('../models/Wishlist');
 const Product = require('../models/Product');
+const notificationService = require('../services/notificationService');
 
 // Get user's wishlist
 const getWishlist = async (req, res) => {
@@ -70,6 +71,9 @@ const addToWishlist = async (req, res) => {
         });
 
         await wishlist.save();
+
+        // Send Notification
+        await notificationService.notifyWishlistAdded(req.user._id, product.name);
 
         res.json({
             success: true,

@@ -122,7 +122,7 @@ deliveryScheduleSchema.index({ preferredDeliveryDate: 1 });
 deliveryScheduleSchema.index({ status: 1 });
 
 // Set time slot details based on preferred time slot
-deliveryScheduleSchema.pre('save', function(next) {
+deliveryScheduleSchema.pre('save', function() {
     if (this.isModified('preferredTimeSlot') || this.isNew) {
         const timeSlots = {
             'morning_9_12': { start: '09:00', end: '12:00' },
@@ -134,7 +134,6 @@ deliveryScheduleSchema.pre('save', function(next) {
         this.timeSlotDetails = timeSlots[this.preferredTimeSlot] || timeSlots['morning_9_12'];
     }
     this.updatedAt = Date.now();
-    next();
 });
 
 module.exports = mongoose.model('DeliverySchedule', deliveryScheduleSchema);

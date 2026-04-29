@@ -4,6 +4,7 @@ const {
     createProduct,
     updateProduct,
     getSellerProducts,
+    getProduct,
     deleteProduct,
     getCommissionInfo,
     calculatePricePreview
@@ -17,6 +18,7 @@ router.post('/', createProduct);
 router.get('/', getSellerProducts);
 router.get('/commission-info', getCommissionInfo);
 router.post('/calculate-price', calculatePricePreview);
+router.get('/:productId', getProduct);
 router.put('/:productId', updateProduct);
 router.delete('/:productId', deleteProduct);
 

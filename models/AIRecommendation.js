@@ -12,7 +12,7 @@ const AIRecommendationSchema = new mongoose.Schema({
     },
     queryType: {
         type: String,
-        enum: ['person-description', 'occasion-based', 'emotion-based', 'budget-constrained', 'general'],
+        enum: ['person-description', 'occasion-based', 'emotion-based', 'budget-constrained', 'general', 'conversational', 'description'],
         required: true
     },
     context: {

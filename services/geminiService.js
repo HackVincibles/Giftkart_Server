@@ -9,6 +9,7 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
  */
 class GeminiService {
     constructor() {
+        // Using gemini-pro for maximum compatibility and stability
         this.model = genAI.getGenerativeModel({ model: 'gemini-pro' });
     }
 
@@ -24,8 +25,9 @@ class GeminiService {
             const response = await result.response;
             return response.text();
         } catch (error) {
-            console.error('Gemini API Error:', error);
-            throw new Error('Failed to generate AI response');
+            console.error('⚠️ Gemini API Error:', error.message);
+            // Instead of throwing, return a marker that triggers fallbacks
+            return "FALLBACK_REQUIRED";
         }
     }
 
@@ -34,51 +36,58 @@ class GeminiService {
      * @param {string} description - Person description
      * @returns {Promise<Object>} Analysis result with emotions, personality, etc.
      */
-    async analyzePersonDescription(description) {
-        const prompt = `Analyze this person description for gift recommendations: "${description}"
+    /**
+     * Master analysis function to get all data in ONE Gemini call (Faster!)
+     */
+    async analyzeGiftRequest(message) {
+        const prompt = `Analyze this gift request: "${message}"
 
-Provide a JSON response with:
-- primaryEmotion: main emotion (love, joy, gratitude, nostalgia, admiration, sympathy, excitement, pride)
-- secondaryEmotions: array of other emotions detected
-- personalityTraits: array of personality traits (creative, practical, sentimental, adventurous, tech-savvy, foodie, minimalist, luxury-oriented)
-- confidence: number between 0 and 1
-- interests: array of interests mentioned
-
-Return only valid JSON.`;
+Return ONLY valid JSON with these fields:
+{
+  "intent": "gift_suggestion" | "product_search" | "general",
+  "summary": "3-word summary",
+  "targetGender": "male" | "female" | "neutral",
+  "relationship": "brother" | "sister" | "friend" etc,
+  "personalityTraits": ["trait1", "trait2"],
+  "interests": ["interest1", "interest2"],
+  "searchKeywords": ["term1", "term2", "term3"]
+}`;
 
         try {
             const response = await this.generateText(prompt);
-            // Clean the response to extract JSON
+            
+            if (response === "FALLBACK_REQUIRED") {
+                return this.getHardcodedFallback(message);
+            }
+
             const jsonMatch = response.match(/\{[\s\S]*\}/);
             if (jsonMatch) {
-                const parsed = JSON.parse(jsonMatch[0]);
-                return {
-                    primaryEmotion: parsed.primaryEmotion || 'joy',
-                    secondaryEmotions: parsed.secondaryEmotions || [],
-                    personalityTraits: parsed.personalityTraits || ['practical'],
-                    confidence: parsed.confidence || 0.7,
-                    interests: parsed.interests || []
-                };
+                return JSON.parse(jsonMatch[0]);
             }
-            // Fallback if JSON parsing fails
-            return {
-                primaryEmotion: 'joy',
-                secondaryEmotions: [],
-                personalityTraits: ['practical'],
-                confidence: 0.7,
-                interests: []
-            };
+            return this.getHardcodedFallback(message);
         } catch (error) {
-            console.error('Error analyzing person description:', error);
-            // Fallback to basic analysis
-            return {
-                primaryEmotion: 'joy',
-                secondaryEmotions: [],
-                personalityTraits: ['practical'],
-                confidence: 0.7,
-                interests: []
-            };
+            return this.getHardcodedFallback(message);
         }
+    }
+
+    /**
+     * Reliable keyword-based fallback when AI fails
+     */
+    getHardcodedFallback(message) {
+        const lower = message.toLowerCase();
+        let gender = 'neutral';
+        if (lower.includes('brother') || lower.includes('him') || lower.includes('man') || lower.includes('boy')) gender = 'male';
+        if (lower.includes('sister') || lower.includes('her') || lower.includes('woman') || lower.includes('girl')) gender = 'female';
+
+        return {
+            intent: 'gift_suggestion',
+            summary: message,
+            targetGender: gender,
+            relationship: 'friend',
+            personalityTraits: ['practical'],
+            interests: [],
+            searchKeywords: message.toLowerCase().split(' ').filter(w => w.length >= 3)
+        };
     }
 
     /**
@@ -243,6 +252,33 @@ Return only valid JSON array.`;
     }
 
     /**
+     * Extract specific product search keywords from user query
+     * @param {string} query - User query
+     * @returns {Promise<Array>} Array of keywords/categories
+     */
+    async extractSearchKeywords(query) {
+        const prompt = `Extract specific product categories, gift types, or item names from this request: "${query}"
+
+Examples:
+- "gift for my sister who likes painting" -> ["painting set", "art supplies", "custom portrait"]
+- "something for a cricket fan" -> ["cricket bat", "sports jersey", "cricket kit"]
+
+Return a JSON array of 3-5 specific product keywords. Return only valid JSON array.`;
+
+        try {
+            const response = await this.generateText(prompt);
+            const jsonMatch = response.match(/\[[\s\S]*\]/);
+            if (jsonMatch) {
+                return JSON.parse(jsonMatch[0]);
+            }
+            return query.toLowerCase().split(' ').filter(w => w.length > 3);
+        } catch (error) {
+            console.error('Error extracting search keywords:', error);
+            return query.toLowerCase().split(' ').filter(w => w.length > 3);
+        }
+    }
+
+    /**
      * Generate chatbot response
      * @param {string} intent - Detected intent
      * @param {Array} entities - Extracted entities
@@ -343,6 +379,44 @@ Return only valid JSON.`;
                 socialProof: 0.5,
                 rating: 'Good Match'
             };
+        }
+    }
+
+    /**
+     * Generate a human-like summary of the AI results
+     * @param {string} query - User's original query
+     * @param {Object} analysis - AI's analysis of the person
+     * @param {number} productsCount - Number of products found
+     * @param {Object} budget - Budget context
+     * @returns {Promise<string>} Friendly response message
+     */
+    async generateHumanizedResponse(query, analysis, productsCount, budget) {
+        const prompt = `Act as a friendly, expert gift consultant. Summarize the results of your search.
+User query: "${query}"
+Analysis: ${JSON.stringify(analysis)}
+Products Found: ${productsCount}
+Budget Context: ${JSON.stringify(budget)}
+
+Rules:
+1. If productsCount > 0: Be excited. Mention that you've found ${productsCount} items. Mention that they match the ${analysis.primaryEmotion} feeling and the ${analysis.personalityTraits.join(', ')} personality traits perfectly.
+2. If productsCount == 0: Be empathetic. Explain that while you couldn't find an exact match for "${query}" right now, you've shown some of our top-rated trending items that might still inspire them. Suggest they try broadening their description or adjusting the budget.
+3. If the budget was a constraint, mention if the items fit well within the budget.
+4. Keep it under 4 sentences. Be helpful and warm.
+
+Return only the text response.`;
+
+        try {
+            const res = await this.generateText(prompt);
+            if (res === "FALLBACK_REQUIRED") {
+                return productsCount > 0 
+                    ? `I've found ${productsCount} personalized gifts for you! Based on your request, I've selected items that perfectly match the recipient's style and interests.`
+                    : "I couldn't find an exact match for your description, but I've picked out some of our most popular and versatile gifts that I think you'll love!";
+            }
+            return res;
+        } catch (error) {
+            return productsCount > 0 
+                ? `I've found ${productsCount} personalized gifts for you! Take a look at the collection I've curated for you below.`
+                : "I couldn't find an exact match, but I've suggested some trending alternatives that might work!";
         }
     }
 }

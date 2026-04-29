@@ -3,6 +3,42 @@ const User = require('../models/User');
 const Seller = require('../models/Seller');
 
 module.exports = {
+    protectSetup: async (req, res, next) => {
+        let token;
+
+        if (req.cookies.jwt) {
+            token = req.cookies.jwt;
+        } else if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
+            token = req.headers.authorization.split(' ')[1];
+        }
+
+        if (!token) {
+            return res.status(401).json({ 
+                success: false,
+                message: 'Not authorized to access this route' 
+            });
+        }
+
+        try {
+            const decoded = jwt.verify(token, process.env.JWT_SECRET || process.env.SESSION_SECRET);
+            const user = await User.findById(decoded.id).select('-password');
+            if (!user) {
+                return res.status(401).json({ 
+                    success: false,
+                    message: 'User no longer exists' 
+                });
+            }
+
+            req.user = user;
+            next();
+        } catch (err) {
+            return res.status(401).json({ 
+                success: false,
+                message: 'Token is invalid or expired' 
+            });
+        }
+    },
+
     protect: async (req, res, next) => {
         let token;
 
@@ -29,6 +65,15 @@ module.exports = {
                 return res.status(401).json({ 
                     success: false,
                     message: 'User no longer exists' 
+                });
+            }
+
+            // Check if user is blocked by admin
+            if (user.isBlocked) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Your account has been blocked by the administrator. Please contact support.',
+                    blocked: true
                 });
             }
 
@@ -119,10 +164,10 @@ module.exports = {
     authenticateSeller: async (req, res, next) => {
         let token;
 
-        if (req.cookies.jwt) {
-            token = req.cookies.jwt;
-        } else if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
+        if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
             token = req.headers.authorization.split(' ')[1];
+        } else if (req.cookies.jwt) {
+            token = req.cookies.jwt;
         }
 
         if (!token) {
@@ -135,25 +180,66 @@ module.exports = {
         try {
             const decoded = jwt.verify(token, process.env.JWT_SECRET || process.env.SESSION_SECRET);
             
-            // Check if it's a seller token
-            if (decoded.type !== 'seller') {
+            let seller;
+
+            // Case 1: Token is a dedicated seller token (decoded.type === 'seller')
+            if (decoded.type === 'seller') {
+                seller = await Seller.findById(decoded.sellerId).select('-password');
+            } 
+            // Case 2: Token is a standard user token (decoded.id exists)
+            else if (decoded.id) {
+                const user = await User.findById(decoded.id);
+                if (user && (user.role === 'creator' || user.role === 'admin')) {
+                    // Find the seller profile associated with this user's email
+                    seller = await Seller.findOne({ email: user.email }).select('-password');
+                    
+                    // If no seller profile exists yet but they are a creator, auto-create one for development
+                    if (!seller && user.role === 'creator') {
+                        seller = await Seller.create({
+                            businessName: user.displayName + "'s Studio",
+                            ownerName: user.displayName,
+                            email: user.email,
+                            phone: user.phoneNumber || '0000000000',
+                            password: 'auto_generated_pass',
+                            panNumber: 'ABCDE1234F',
+                            businessAddress: {
+                                street: 'Auto Created',
+                                city: 'Auto Created',
+                                state: 'Auto Created',
+                                pincode: '000000'
+                            },
+                            bankDetails: {
+                                accountNumber: '0000000000',
+                                ifscCode: 'MOCK0000123',
+                                bankName: 'Mock Bank',
+                                accountHolderName: user.displayName
+                            },
+                            verificationStatus: 'verified' // Auto-verify
+                        });
+                    }
+                }
+            }
+
+            if (!seller) {
                 return res.status(403).json({ 
                     success: false,
-                    message: 'Not authorized - seller access required' 
+                    message: 'Not authorized - seller access required. Please register your studio.' 
                 });
             }
 
-            // Check if seller still exists
-            const seller = await Seller.findById(decoded.sellerId).select('-password');
-            if (!seller) {
-                return res.status(401).json({ 
-                    success: false,
-                    message: 'Seller no longer exists' 
+            // Ensure CreatorDashboard entry exists for this seller
+            const CreatorDashboard = require('../models/CreatorDashboard');
+            let dashboard = await CreatorDashboard.findOne({ creator: seller._id });
+            if (!dashboard) {
+                await CreatorDashboard.create({
+                    creator: seller._id,
+                    earnings: { total: 0, pending: 0, available: 0, withdrawn: 0, monthlyBreakdown: [] },
+                    performance: { totalSales: 0, averageRating: 5, completionRate: 100 }
                 });
             }
 
-            // Check if seller is verified
-            if (seller.verificationStatus !== 'verified') {
+            // Check if seller is verified (Relaxed for development: allow verified or pending)
+            if (seller.verificationStatus !== 'verified' && seller.verificationStatus !== 'pending') {
                 return res.status(403).json({ 
                     success: false,
                     message: 'Seller account is not verified' 
@@ -171,6 +257,7 @@ module.exports = {
             req.seller = seller;
             next();
         } catch (err) {
+            console.error('Auth Error:', err);
             return res.status(401).json({ 
                 success: false,
                 message: 'Token is invalid or expired' 

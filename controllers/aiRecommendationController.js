@@ -1,7 +1,8 @@
 const Product = require('../models/Product');
 const AIRecommendation = require('../models/AIRecommendation');
 const User = require('../models/User');
-const { giftMindReader, emotionBasedSuggestions, personalityTwin, giftSuccessScore } = require('../services/ai');
+const { giftMindReader } = require('../services/ai');
+const geminiService = require('../services/geminiService');
 
 // Helper function to generate follow-up questions
 const generateFollowUpQuestions = (query, context) => {
@@ -85,150 +86,180 @@ const generateCustomizationSuggestions = (product) => {
 // Main recommendation function
 const getGiftRecommendations = async (req, res) => {
     try {
-        const { query, queryType, context } = req.body;
+        const { query, context } = req.body;
         const userId = req.user?._id;
 
-        // Analyze the query using AI service (now async with Gemini)
-        const analysis = await giftMindReader.analyzePersonDescription(query);
-
-        // Build product filter based on analysis
-        const filter = { isActive: true };
-
-        // Filter by emotion-based categories
-        const emotionCategories = giftMindReader.getEmotionBasedGifts(analysis.primaryEmotion);
-        if (emotionCategories.length > 0) {
-            filter.aiTags = { $elemMatch: { category: { $in: emotionCategories } } };
+        // 1. MASTER NLP ANALYSIS (Single call for speed!)
+        const analysis = await geminiService.analyzeGiftRequest(query);
+        console.log("🚀 MASTER AI ANALYSIS:", analysis);
+        
+        // 2. TARGETED PRODUCT SEARCH
+        const combinedKeywords = [...new Set([...(analysis.searchKeywords || []), ...(analysis.interests || [])])];
+        let products = [];
+        
+        if (combinedKeywords.length > 0) {
+            const searchRegex = combinedKeywords.join('|');
+            products = await Product.find({
+                isActive: true,
+                $or: [
+                    { name: { $regex: searchRegex, $options: 'i' } },
+                    { description: { $regex: searchRegex, $options: 'i' } },
+                    { category: { $regex: searchRegex, $options: 'i' } },
+                    { 'aiTags.category': { $in: combinedKeywords } }
+                ]
+            }).populate('creator', 'displayName creatorProfile.studioName creatorProfile.isVerified').limit(50);
         }
 
-        // Filter by budget if provided
-        if (context?.budget?.min || context?.budget?.max) {
-            filter['pricing.base'] = {};
-            if (context.budget.min) filter['pricing.base'].$gte = context.budget.min;
-            if (context.budget.max) filter['pricing.base'].$lte = context.budget.max;
+        // 3. Fallback to trait-based search if no direct category match
+        if (products.length < 2) {
+            const traitRegex = analysis.personalityTraits.join('|');
+            const fallbackProducts = await Product.find({
+                isActive: true,
+                $or: [
+                    { description: { $regex: traitRegex, $options: 'i' } },
+                    { 'aiTags.personalityTraits': { $in: analysis.personalityTraits } }
+                ]
+            }).populate('creator', 'displayName creatorProfile.studioName creatorProfile.isVerified').limit(20);
+            
+            // Merge results
+            products = [...products, ...fallbackProducts];
         }
 
-        // Filter by relationship if provided
-        if (context?.relationship) {
-            const relationshipCategories = giftMindReader.getRelationshipBasedGifts(context.relationship);
-            if (relationshipCategories.length > 0) {
-                filter['aiTags.category'] = { $in: relationshipCategories };
-            }
+        // 3.5 GENDER-BASED FILTERING (Crucial fix for Brother/Sister mismatch)
+        if (analysis.targetGender && analysis.targetGender !== 'neutral') {
+            const isMale = analysis.targetGender === 'male';
+            const isFemale = analysis.targetGender === 'female';
+            
+            products = products.filter(p => {
+                const desc = (p.description + " " + p.name + " " + p.category).toLowerCase();
+                
+                // If searching for male, filter out obviously feminine items unless highly matched
+                if (isMale) {
+                    const feminineWords = ['makeup', 'lipstick', 'skirt', 'dress', 'feminine', 'women', 'girl', 'sister', 'lady'];
+                    const hasFeminineWord = feminineWords.some(w => desc.includes(w));
+                    // Check if it's explicitly tagged for men
+                    const isForMen = desc.includes('men') || desc.includes('boy') || desc.includes('brother') || desc.includes('him');
+                    if (hasFeminineWord && !isForMen) return false;
+                }
+                
+                // If searching for female, filter out obviously masculine items
+                if (isFemale) {
+                    const masculineWords = ['beard', 'shaving', 'masculine', 'men', 'boy', 'brother', 'gentleman'];
+                    const hasMasculineWord = masculineWords.some(w => desc.includes(w));
+                    const isForWomen = desc.includes('women') || desc.includes('girl') || desc.includes('sister') || desc.includes('her');
+                    if (hasMasculineWord && !isForWomen) return false;
+                }
+                
+                return true;
+            });
         }
 
-        // Fetch products
-        let products = await Product.find(filter)
-            .populate('creator', 'displayName creatorProfile.studioName creatorProfile.isVerified')
-            .limit(50);
+        // 3. BUDGET FILTERING (If provided in query or context)
+        const budgetMatch = query.match(/(\d+)/);
+        const maxBudget = context?.budget?.max || (budgetMatch ? parseInt(budgetMatch[0]) * 1.5 : null);
+        
+        if (maxBudget && products.length > 0) {
+            products = products.filter(p => p.basePrice <= maxBudget);
+        }
 
-        // If no products found with emotion filter, try broader search
+        // 4. Determine if we should handle as Natural Conversation
+        const intent = await geminiService.detectIntent(query);
+        const isGreeting = ['hi', 'hello', 'hey'].includes(query.toLowerCase().trim());
+
+        if (products.length === 0 && (isGreeting || intent === 'general')) {
+             const chatbotRes = await geminiService.generateChatbotResponse(intent, [], query);
+             return res.json({
+                 success: true,
+                 conversationMode: true,
+                 data: {
+                     message: chatbotRes.content,
+                     suggestedActions: chatbotRes.suggestedActions,
+                     analysis,
+                     recommendations: []
+                 }
+             });
+        }
+
+        // 5. Global fallback if still nothing (Use personality traits for broad match)
         if (products.length === 0) {
-            delete filter.aiTags;
-            delete filter['aiTags.category'];
-            products = await Product.find(filter)
-                .populate('creator', 'displayName creatorProfile.studioName creatorProfile.isVerified')
-                .limit(50);
+            const traitRegex = analysis.personalityTraits.join('|');
+            products = await Product.find({
+                isActive: true,
+                $or: [
+                    { description: { $regex: traitRegex, $options: 'i' } },
+                    { 'aiTags.personalityTraits': { $in: analysis.personalityTraits } }
+                ]
+            }).populate('creator', 'displayName creatorProfile.studioName creatorProfile.isVerified').limit(20);
         }
 
-        // Calculate scores using AI service (now async with Gemini)
+        // Final fallback to trending
+        if (products.length === 0) {
+            products = await Product.find({ isActive: true })
+                .populate('creator', 'displayName creatorProfile.studioName creatorProfile.isVerified')
+                .sort({ averageRating: -1 })
+                .limit(10);
+        }
+
         const scoredProducts = await Promise.all(products.map(async (product) => {
-            const scoreData = await giftSuccessScore.calculateScore(product, context || {}, analysis);
-            return {
-                product,
-                score: scoreData.overall,
-                scoreBreakdown: scoreData
-            };
+            const scoreData = await geminiService.calculateGiftSuccessScore(product, context || {}, analysis);
+            return { product, score: scoreData.overall, scoreBreakdown: scoreData };
         }));
 
         scoredProducts.sort((a, b) => b.score - a.score);
+        const topRecommendations = scoredProducts.slice(0, 15);
 
-        // Take top 10-20 recommendations
-        const topRecommendations = scoredProducts.slice(0, 20);
-
-        // Generate reasoning for each recommendation
         const recommendations = topRecommendations.map(({ product, score, scoreBreakdown }) => {
-            const reasoning = [];
-            
-            if (product.emotionalContext && product.emotionalContext.some(e => e.emotion === analysis.primaryEmotion)) {
-                reasoning.push(`Matches the ${analysis.primaryEmotion} emotion you described`);
-            }
-            
-            if (product.averageRating >= 4) {
-                reasoning.push(`Highly rated by other buyers (${product.averageRating}/5)`);
-            }
-            
-            if (product.emotionalImpactAverage >= 4) {
-                reasoning.push(`Strong emotional impact on recipients`);
-            }
-
             return {
                 product: product._id,
                 score: Math.round(score * 100) / 100,
                 scoreBreakdown,
-                reasoning: reasoning.join('. ') || 'Well-suited based on your description',
+                reasoning: scoreBreakdown.rating || 'A great match for your description',
                 whyPerfect: generateWhyPerfect(product, analysis),
                 customizationSuggestions: generateCustomizationSuggestions(product),
-                priceRange: {
-                    min: product.pricing.base,
-                    max: product.pricing.base + (product.pricing.customizationFee || 0)
-                },
+                priceRange: { min: product.basePrice, max: product.basePrice + 500 },
                 creator: product.creator,
-                estimatedDelivery: product.inventory ? `${product.inventory.productionTime.normal}-${product.inventory.productionTime.urgent} days` : '5-7 days'
+                estimatedDelivery: '3-5 days'
             };
         });
-
-        // Generate follow-up questions
-        const followUpQuestions = generateFollowUpQuestions(query, context || {});
-
-        // Get emotion-based suggestions (now async with Gemini)
-        const emotionSuggestions = await emotionBasedSuggestions.generateSuggestions(
-            analysis.primaryEmotion,
-            analysis.secondaryEmotions,
-            context
-        );
-
-        // Get personality twin analysis (now async with Gemini)
-        const personalityAnalysis = await personalityTwin.findPersonalityTwin(query);
 
         // Save recommendation to database
         const recommendationRecord = await AIRecommendation.create({
             user: userId,
             query,
-            queryType,
+            queryType: 'conversational',
             context: context || {},
-            aiAnalysis: {
-                giftMindReader: analysis,
-                emotionBasedSuggestions: emotionSuggestions,
-                personalityTwin: personalityAnalysis,
-                giftSuccessScore: {
-                    overall: topRecommendations[0]?.score || 0.5,
-                    emotionalImpact: scoreBreakdown?.emotionalImpact || 0.7,
-                    practicality: scoreBreakdown?.practicality || 0.7,
-                    uniqueness: scoreBreakdown?.uniqueness || 0.6
-                }
-            },
-            recommendations,
-            followUpQuestions
+            aiAnalysis: { giftMindReader: analysis },
+            recommendations
         });
+
+        // Generate a humanized, conversational response using Gemini
+        const humanMessage = await geminiService.generateHumanizedResponse(
+            query, 
+            analysis, 
+            recommendations.length, 
+            context?.budget || { max: 5000 }
+        );
 
         res.json({
             success: true,
+            conversationMode: false,
             data: {
                 id: recommendationRecord._id,
                 query,
                 analysis,
-                personalityAnalysis,
+                message: humanMessage,
                 recommendations: recommendations.map(r => ({
                     ...r,
                     product: topRecommendations.find(tp => tp.product._id.toString() === r.product.toString())?.product
                 })),
-                followUpQuestions,
                 totalFound: recommendations.length
             }
         });
     } catch (error) {
+        console.error('AI Suggestion Error:', error);
         res.status(500).json({
             success: false,
-            message: 'Error generating recommendations',
+            message: 'AI is having trouble thinking. Try again?',
             error: error.message
         });
     }

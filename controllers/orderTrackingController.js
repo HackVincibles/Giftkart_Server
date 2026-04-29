@@ -6,18 +6,45 @@ const getOrderTracking = async (req, res) => {
     try {
         const { orderId } = req.params;
 
-        const tracking = await OrderTracking.findOne({ order: orderId })
+        let tracking = await OrderTracking.findOne({ order: orderId })
             .populate('order');
 
         if (!tracking) {
-            return res.status(404).json({
-                success: false,
-                message: 'Tracking information not found'
+            // Check if order exists
+            const order = await Order.findById(orderId);
+            if (!order) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Order not found'
+                });
+            }
+
+            // Auto-create tracking record if missing (for legacy orders or sync issues)
+            tracking = await OrderTracking.create({
+                order: orderId,
+                currentStage: order.status === 'cancelled' ? 'cancelled' : 'order_placed',
+                deliveryAddress: {
+                    name: order.shippingAddress?.name || 'Customer',
+                    phone: order.shippingAddress?.phone || '',
+                    address: `${order.shippingAddress?.street || ''}, ${order.shippingAddress?.city || ''}`,
+                    city: order.shippingAddress?.city || '',
+                    state: order.shippingAddress?.state || '',
+                    pincode: order.shippingAddress?.pincode || ''
+                },
+                trackingEvents: [{
+                    stage: 'order_placed',
+                    status: 'Order Placed',
+                    description: 'Order has been successfully placed and is awaiting confirmation.',
+                    timestamp: order.createdAt || Date.now()
+                }]
             });
+            
+            // Re-fetch with population
+            tracking = await OrderTracking.findById(tracking._id).populate('order');
         }
 
-        // Check authorization
-        if (tracking.order.user.toString() !== req.user._id.toString()) {
+        // Check authorization (Buyer or Admin/Seller)
+        if (tracking.order.buyer.toString() !== req.user._id.toString() && req.user.role === 'buyer') {
             return res.status(403).json({
                 success: false,
                 message: 'Not authorized to view this tracking'

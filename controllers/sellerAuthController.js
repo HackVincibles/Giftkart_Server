@@ -1,6 +1,7 @@
 const Seller = require('../models/Seller');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
+const AdminNotification = require('../models/AdminNotification');
 
 // Generate JWT Token
 const generateToken = (sellerId) => {
@@ -49,8 +50,22 @@ const registerSeller = async (req, res) => {
             panNumber,
             businessAddress,
             bankDetails,
-            verificationStatus: 'pending'
+            verificationStatus: 'pending' // Requires admin approval before listing products
         });
+
+        // Notify admin about new seller registration
+        try {
+            await AdminNotification.create({
+                type: 'seller_registration',
+                title: 'New Seller Registration',
+                message: `${businessName} (${ownerName}) has registered and is awaiting verification. Review their documents to approve or reject.`,
+                referenceId: seller._id,
+                referenceModel: 'Seller',
+                actionRequired: true
+            });
+        } catch (notifErr) {
+            console.error('Failed to create admin notification:', notifErr.message);
+        }
 
         // Generate token
         const token = generateToken(seller._id);

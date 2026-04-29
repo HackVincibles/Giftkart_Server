@@ -1,6 +1,7 @@
 const Cart = require('../models/Cart');
 const Product = require('../models/Product');
 const Coupon = require('../models/Coupon');
+const notificationService = require('../services/notificationService');
 
 // Get user's cart
 const getCart = async (req, res) => {
@@ -68,13 +69,13 @@ const addToCart = async (req, res) => {
         if (existingItemIndex !== -1) {
             // Update quantity
             cart.items[existingItemIndex].quantity += quantity;
-            cart.items[existingItemIndex].price = product.pricing.final;
+            cart.items[existingItemIndex].price = product.basePrice;
         } else {
             // Add new item
             cart.items.push({
                 product: productId,
                 quantity,
-                price: product.pricing.final,
+                price: product.basePrice,
                 customization: customizationId,
                 selectedVariants,
                 giftWrap,
@@ -85,6 +86,9 @@ const addToCart = async (req, res) => {
         }
 
         await cart.save();
+
+        // Send Notification
+        await notificationService.notifyCartAdded(req.user._id, product.name);
 
         res.json({
             success: true,
