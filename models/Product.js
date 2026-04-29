@@ -27,6 +27,15 @@ const ProductSchema = new mongoose.Schema({
         type: String,
         default: 'INR'
     },
+    internationalPrices: {
+        USD: Number,
+        EUR: Number,
+        GBP: Number
+    },
+    isInternational: {
+        type: Boolean,
+        default: false
+    },
     images: [{
         url: String,
         alt: String

@@ -13,6 +13,12 @@ router.get('/google', getGoogleUrl);
 router.get('/google/callback', googleCallback);
 router.post('/google', googleLoginClient);
 
+// Password Reset Flow
+const { forgotPassword, verifyOTP, resetPassword } = require('../controllers/authController');
+router.post('/forgot-password', forgotPassword);
+router.post('/verify-otp', verifyOTP);
+router.post('/reset-password', resetPassword);
+
 // Protected Routes
 router.get('/me', protect, getMe);
 router.post('/set-role', protectSetup, setRole);

@@ -23,3 +23,28 @@ exports.generateRecommendations = async (req, res) => {
         res.status(500).json({ success: false, message: 'Fulfillment error.' });
     }
 };
+
+// Generate a creative personalization suggestion for a product
+exports.getPersonalizationSuggestion = async (req, res) => {
+    try {
+        const { productName, description, category } = req.body;
+        const geminiService = require('../services/geminiService');
+
+        const prompt = `You are a creative artisanal consultant. A customer is looking at a product: "${productName}" (${category}). 
+        Description: "${description}".
+        
+        Suggest ONE unique, artistic way to personalize this gift. 
+        Examples: A specific embroidery pattern, a unique engraving quote, a hidden message placement, or a specific color palette choice.
+        Be creative and keep it to 2 sentences.`;
+
+        const suggestion = await geminiService.generateText(prompt);
+
+        res.json({
+            success: true,
+            suggestion: suggestion.trim()
+        });
+    } catch (error) {
+        console.error('AI Suggestion Error:', error);
+        res.status(500).json({ success: false, message: 'AI failed to generate suggestion' });
+    }
+};

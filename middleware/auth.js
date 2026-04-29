@@ -59,29 +59,31 @@ module.exports = {
         try {
             const decoded = jwt.verify(token, process.env.JWT_SECRET || process.env.SESSION_SECRET);
             
-            // Check if user still exists
-            const user = await User.findById(decoded.id).select('-password');
+            // Check in User collection first
+            let user = await User.findById(decoded.id).select('-password');
+            
+            // If not found, check in Seller collection (for manual seller logins)
+            if (!user && (decoded.sellerId || decoded.id)) {
+                user = await Seller.findById(decoded.sellerId || decoded.id).select('-password');
+                if (user) {
+                    // Normalize seller object to look like user for middleware purposes
+                    user.role = 'seller'; 
+                }
+            }
+
             if (!user) {
                 return res.status(401).json({ 
                     success: false,
-                    message: 'User no longer exists' 
+                    message: 'Account no longer exists' 
                 });
             }
 
-            // Check if user is blocked by admin
+            // Check if user is blocked (User model only usually)
             if (user.isBlocked) {
                 return res.status(403).json({
                     success: false,
-                    message: 'Your account has been blocked by the administrator. Please contact support.',
+                    message: 'Your account has been blocked by the administrator.',
                     blocked: true
-                });
-            }
-
-            // Check if user is active
-            if (user.role === 'unassigned') {
-                return res.status(403).json({ 
-                    success: false,
-                    message: 'Please complete your profile setup' 
                 });
             }
 

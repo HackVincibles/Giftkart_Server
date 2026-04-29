@@ -55,7 +55,16 @@ const getOrderQueue = async (req, res) => {
     try {
         const { status } = req.query;
         
-        const dashboard = await CreatorDashboard.findOne({ creator: req.seller._id });
+        const dashboard = await CreatorDashboard.findOne({ creator: req.seller._id })
+            .populate({
+                path: 'orderQueue.order',
+                populate: [
+                    { path: 'buyer', select: 'displayName email phoneNumber avatar' },
+                    { path: 'products.product' }
+                ]
+            })
+            .populate('orderQueue.customization');
+
         if (!dashboard) {
             return res.status(404).json({
                 success: false,
@@ -139,6 +148,73 @@ const updateOrderStatus = async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Error updating order status',
+            error: error.message
+        });
+    }
+};
+
+// Add tracking info
+const addTrackingInfo = async (req, res) => {
+    try {
+        const { orderQueueId } = req.params;
+        const { courierName, trackingNumber, estimatedDeliveryDate } = req.body;
+        const OrderTracking = require('../models/OrderTracking');
+
+        const dashboard = await CreatorDashboard.findOne({ creator: req.seller._id });
+        if (!dashboard) {
+            return res.status(404).json({ success: false, message: 'Dashboard not found' });
+        }
+
+        const orderItem = dashboard.orderQueue.id(orderQueueId);
+        if (!orderItem) {
+            return res.status(404).json({ success: false, message: 'Order not found in queue' });
+        }
+
+        // Update Order Status to 'shipped'
+        orderItem.status = 'completed'; // For creator, it's completed once shipped
+        await dashboard.save();
+
+        // Update the main Order model
+        const order = await Order.findById(orderItem.order);
+        if (order) {
+            order.deliveryStatus = 'shipped';
+            await order.save();
+        }
+
+        // Update or Create OrderTracking
+        const tracking = await OrderTracking.findOneAndUpdate(
+            { order: orderItem.order },
+            { 
+                $set: { 
+                    currentStage: 'shipped',
+                    'courierDetails.courierName': courierName,
+                    'courierDetails.trackingNumber': trackingNumber,
+                    'courierDetails.estimatedDeliveryDate': estimatedDeliveryDate,
+                    'courierDetails.shippedDate': new Date()
+                },
+                $push: {
+                    trackingEvents: {
+                        stage: 'shipped',
+                        status: 'shipped',
+                        location: 'Artisan Studio',
+                        description: `Order has been handed over to ${courierName}. Tracking: ${trackingNumber}`,
+                        timestamp: new Date()
+                    }
+                }
+            },
+            { upsert: true, new: true }
+        );
+
+        res.json({
+            success: true,
+            message: 'Tracking information added successfully',
+            data: tracking
+        });
+    } catch (error) {
+        console.error('Add Tracking Error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error adding tracking info',
             error: error.message
         });
     }
@@ -489,6 +565,7 @@ module.exports = {
     getDashboard,
     getOrderQueue,
     updateOrderStatus,
+    addTrackingInfo,
     getOrderAISuggestions,
     getEarnings,
     requestWithdrawal,

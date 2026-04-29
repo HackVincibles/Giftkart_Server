@@ -143,6 +143,25 @@ const autoGiftCalendarSchema = new mongoose.Schema({
         default: 'pending'
     },
     paymentId: String,
+
+    // Autonomous Mode (Phase 6)
+    isAutonomous: {
+        type: Boolean,
+        default: false
+    },
+    approvalRequired: {
+        type: Boolean,
+        default: true
+    },
+    autoSelectionCriteria: {
+        maxBudget: Number,
+        preferredStyle: [String],
+        aiTone: {
+            type: String,
+            enum: ['funny', 'emotional', 'formal', 'romantic'],
+            default: 'emotional'
+        }
+    },
     
     // Reminders
     remindersSent: [{

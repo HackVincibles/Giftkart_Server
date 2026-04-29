@@ -80,6 +80,8 @@ app.use('/api/public', require('./routes/public'));
 app.use('/api/products', require('./routes/products'));
 app.use('/api/customizations', require('./routes/customizations'));
 app.use('/api/search', require('./routes/search'));
+app.use('/api/chat', require('./routes/chat'));
+app.use('/api/referral', require('./routes/referral'));
 
 // Error handler middleware (must be after routes)
 app.use(logError);

@@ -11,6 +11,9 @@ const AdminNotification = require('../models/AdminNotification');
 const Return = require('../models/Return');
 const Withdrawal = require('../models/Withdrawal');
 const Wallet = require('../models/Wallet');
+const OrderTracking = require('../models/OrderTracking');
+const { emitOrderStatusChange } = require('../services/socket');
+const { sendEmail } = require('../services/emailService');
 
 const PLATFORM_COMMISSION_RATE = 4; // 4% on every order
 
@@ -189,6 +192,26 @@ const verifySeller = async (req, res) => {
             success: true,
             message: 'Seller verified successfully',
             data: seller
+        });
+
+        // Notify Seller via Email
+        await sendEmail({
+            email: seller.email,
+            subject: 'Congratulations! Your Artisan Account is Verified - GiftKart',
+            html: `
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 10px;">
+                    <h2 style="color: #8b5cf6;">Welcome to the Artisan Community!</h2>
+                    <p>Hello ${seller.ownerName},</p>
+                    <p>We are thrilled to inform you that your seller account for <b>${seller.businessName}</b> has been verified by our team.</p>
+                    <p>You can now start listing your premium products and reaching thousands of gift-seekers on our platform.</p>
+                    <div style="text-align: center; margin: 30px 0;">
+                        <a href="${process.env.CLIENT_URL}/seller-login" style="background: #8b5cf6; color: white; padding: 12px 25px; text-decoration: none; border-radius: 5px; font-weight: bold;">Go to Dashboard</a>
+                    </div>
+                    <p>Happy Gifting!</p>
+                    <hr style="border: none; border-top: 1px solid #e2e8f0;" />
+                    <p style="font-size: 0.8rem; color: #94a3b8;">GiftKart Team</p>
+                </div>
+            `
         });
     } catch (error) {
         res.status(500).json({
@@ -672,6 +695,51 @@ const updateOrderStatus = async (req, res) => {
             }
         }
 
+        // ─── Update OrderTracking ────────────────────────────────
+        try {
+            let tracking = await OrderTracking.findOne({ order: orderId });
+            if (!tracking) {
+                tracking = new OrderTracking({
+                    order: orderId,
+                    deliveryAddress: {
+                        name: order.shippingAddress?.name || 'Customer',
+                        phone: order.shippingAddress?.phone || '',
+                        address: `${order.shippingAddress?.street || ''}, ${order.shippingAddress?.city || ''}`,
+                        city: order.shippingAddress?.city || '',
+                        state: order.shippingAddress?.state || '',
+                        pincode: order.shippingAddress?.pincode || ''
+                    }
+                });
+            }
+
+            // Map order status to tracking stage if they differ
+            const stageMapping = {
+                'paid': 'confirmed',
+                'processing': 'processing',
+                'shipped': 'shipped',
+                'out_for_delivery': 'out_for_delivery',
+                'delivered': 'delivered',
+                'cancelled': 'cancelled'
+            };
+
+            const trackingStage = stageMapping[status] || status;
+            
+            await tracking.addTrackingEvent(
+                trackingStage,
+                req.body.location || 'Central Hub',
+                note || `Order status updated to ${status}`
+            );
+
+            // Emit Real-time Socket Notification
+            emitOrderStatusChange(orderId, status, {
+                description: note || `Your order is now ${status}`,
+                timestamp: new Date()
+            });
+
+        } catch (trackErr) {
+            console.error('Failed to sync OrderTracking:', trackErr);
+        }
+
         res.json({
             success: true,
             message: `Order status updated to "${status}"`,
@@ -696,6 +764,23 @@ const rejectSeller = async (req, res) => {
         );
         if (!seller) return res.status(404).json({ success: false, message: 'Seller not found' });
         res.json({ success: true, message: 'Seller rejected', data: seller });
+
+        // Notify Seller via Email
+        await sendEmail({
+            email: seller.email,
+            subject: 'Update regarding your Seller Application - GiftKart',
+            html: `
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 10px;">
+                    <h2 style="color: #ef4444;">Seller Application Update</h2>
+                    <p>Hello ${seller.ownerName},</p>
+                    <p>Thank you for your interest in joining GiftKart. After reviewing your application for <b>${seller.businessName}</b>, we regret to inform you that we cannot approve it at this time.</p>
+                    <p><b>Reason:</b> ${reason || 'Application did not meet our current requirements.'}</p>
+                    <p>If you believe this was an error or have updated your documents, you can contact our support team.</p>
+                    <hr style="border: none; border-top: 1px solid #e2e8f0;" />
+                    <p style="font-size: 0.8rem; color: #94a3b8;">GiftKart Support Team</p>
+                </div>
+            `
+        });
     } catch (error) {
         res.status(500).json({ success: false, message: 'Error rejecting seller', error: error.message });
     }

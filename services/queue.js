@@ -108,8 +108,15 @@ if (queuesEnabled) {
     autoGiftQueue.process('check-occasions', async function(job) {
         const { date } = job.data;
         logger.info('Checking upcoming occasions', { date });
-        // Check for upcoming auto-gift occasions
-        return { success: true, message: 'Occasions checked' };
+        
+        try {
+            const AutonomousGiftingService = require('./autonomousGiftingService');
+            await AutonomousGiftingService.processAutonomousQueue();
+            return { success: true, message: 'Autonomous queue processed' };
+        } catch (error) {
+            logger.error('Autonomous processing failed', { error: error.message });
+            throw error;
+        }
     });
 
     autoGiftQueue.process('send-gift-suggestions', async function(job) {

@@ -40,6 +40,11 @@ const UserSchema = new mongoose.Schema({
         enum: ['buyer', 'creator', 'admin', 'unassigned'],
         default: 'unassigned'
     },
+    referralCode: {
+        type: String,
+        unique: true,
+        sparse: true
+    },
     buyerProfile: {
         preferences: [String],
         interests: [String],
@@ -77,6 +82,8 @@ const UserSchema = new mongoose.Schema({
     },
     blockedAt: Date,
     blockReason: String,
+    resetPasswordOTP: String,
+    resetPasswordExpires: Date,
     createdAt: {
         type: Date,
         default: Date.now

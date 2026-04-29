@@ -159,7 +159,11 @@ const sellerSchema = new mongoose.Schema({
         type: Date,
         default: Date.now
     },
-    lastLoginAt: Date
+    lastLoginAt: Date,
+
+    // Security
+    resetPasswordOTP: String,
+    resetPasswordExpires: Date
 }, {
     timestamps: true
 });

@@ -179,6 +179,14 @@ const getConnectedSellersCount = () => {
     return connectedSellers.size;
 };
 
+// Emit new chat message
+const emitNewMessage = (orderId, message) => {
+    if (io) {
+        io.to(`order:${orderId}`).emit('new-message', message);
+        logger.info('New message emitted', { orderId });
+    }
+};
+
 module.exports = {
     initializeSocket,
     emitOrderUpdate,
@@ -190,5 +198,6 @@ module.exports = {
     broadcastToUsers,
     broadcastToSellers,
     getConnectedUsersCount,
-    getConnectedSellersCount
+    getConnectedSellersCount,
+    emitNewMessage
 };

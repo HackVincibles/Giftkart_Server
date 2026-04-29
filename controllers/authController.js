@@ -3,6 +3,8 @@ const Wallet = require('../models/Wallet');
 const jwt = require('jsonwebtoken');
 const { OAuth2Client } = require('google-auth-library');
 const axios = require('axios');
+const { sendOTP, sendEmail } = require('../services/emailService');
+const crypto = require('crypto');
 
 // Helper to get Google Client (Ensures ENV is loaded)
 const getOAuth2Client = () => {
@@ -28,6 +30,7 @@ const sendToken = (user, statusCode, res) => {
 
     res.status(statusCode).cookie('jwt', token, cookieOptions).json({
         success: true,
+        token, // Return token for frontend storage
         user: {
             id: user._id,
             displayName: user.displayName,
@@ -41,8 +44,8 @@ const sendToken = (user, statusCode, res) => {
 // @desc    Register user (Manual)
 exports.register = async (req, res) => {
     try {
-        const { displayName, email, password } = req.body;
-        console.log('Registration attempt:', { displayName, email });
+        const { displayName, email, password, role, referralCode } = req.body;
+        console.log('Registration attempt:', { displayName, email, role });
 
         let user = await User.findOne({ email });
         if (user) {
@@ -50,11 +53,59 @@ exports.register = async (req, res) => {
             return res.status(400).json({ message: 'User already exists' });
         }
 
-        user = await User.create({ displayName, email, password, authMethod: 'local' });
-        console.log('User created successfully:', user._id, user.email);
+        // Create user with role
+        user = await User.create({ 
+            displayName, 
+            email, 
+            password, 
+            role: role || 'buyer',
+            authMethod: 'local',
+            buyerProfile: role === 'buyer' ? { preferences: [], interests: [], shippingAddress: {} } : undefined,
+            creatorProfile: role === 'creator' ? { studioName: '', bio: '', portfolioLinks: [], bankDetails: {} } : undefined
+        });
+        console.log('User created successfully:', user._id, user.email, user.role);
         
         // Initialize Wallet for new user
         await Wallet.create({ user: user._id });
+
+        // Process referral if code exists
+        if (referralCode) {
+            try {
+                const referralController = require('./referralController');
+                await referralController.processReferral(referralCode, user._id);
+            } catch (refErr) {
+                console.error('Referral Processing Error:', refErr);
+            }
+        }
+
+        // Send Welcome Email
+        try {
+            await sendEmail({
+                email: user.email,
+                subject: 'Welcome to GiftKart - Your Journey into Premium Gifting Begins!',
+                html: `
+                    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 10px;">
+                        <h2 style="color: #8b5cf6; text-align: center;">Welcome to GiftKart! 🎁</h2>
+                        <p>Hello ${user.displayName},</p>
+                        <p>Thank you for joining GiftKart, the ultimate destination for premium, personalized gifts.</p>
+                        <p>Whether you're here to find the perfect gift for a loved one or to showcase your own artisan creations, we're excited to have you on board.</p>
+                        <div style="background: #f8fafc; padding: 15px; border-radius: 8px; margin: 20px 0;">
+                            <h3 style="margin-top: 0; color: #1e293b;">Getting Started:</h3>
+                            <ul style="color: #475569;">
+                                <li>Explore our AI-powered gift recommendations</li>
+                                <li>Setup your gift calendar so you never miss a birthday</li>
+                                <li>Connect with unique artisans from across the country</li>
+                            </ul>
+                        </div>
+                        <p>Happy Gifting!</p>
+                        <hr style="border: none; border-top: 1px solid #e2e8f0;" />
+                        <p style="font-size: 0.8rem; color: #94a3b8; text-align: center;">The GiftKart Team</p>
+                    </div>
+                `
+            });
+        } catch (mailErr) {
+            console.error('Welcome email failed:', mailErr);
+        }
         
         sendToken(user, 201, res);
     } catch (err) {
@@ -72,7 +123,7 @@ exports.login = async (req, res) => {
         const user = await User.findOne({ email }).select('+password');
         console.log('User found:', user ? user._id : 'No user found');
 
-        if (!user || user.authMethod !== 'local' || !(await user.matchPassword(password))) {
+        if (!user || !user.password || !(await user.matchPassword(password))) {
             console.log('Invalid credentials for:', email);
             return res.status(401).json({ message: 'Invalid credentials' });
         }
@@ -236,5 +287,81 @@ exports.setRole = async (req, res) => {
     } catch (err) {
         console.error('SetRole Error:', err);
         res.status(500).json({ message: err.message });
+    }
+};
+
+// @desc    Forgot Password - Send OTP
+exports.forgotPassword = async (req, res) => {
+    try {
+        const { email } = req.body;
+        const user = await User.findOne({ email });
+
+        if (!user) {
+            return res.status(404).json({ success: false, message: 'No user found with that email' });
+        }
+
+        // Allow all users to reset/set a password, even if they initially used Google
+
+        // Generate 6-digit OTP
+        const otp = Math.floor(100000 + Math.random() * 900000).toString();
+        
+        // Save OTP and Expiry (10 mins)
+        user.resetPasswordOTP = otp;
+        user.resetPasswordExpires = Date.now() + 10 * 60 * 1000;
+        await user.save();
+
+        // Send Email
+        await sendOTP(email, otp);
+
+        res.status(200).json({ success: true, message: 'OTP sent to email' });
+    } catch (err) {
+        console.error('Forgot Password Error:', err);
+        res.status(500).json({ success: false, message: 'Email could not be sent' });
+    }
+};
+
+// @desc    Verify OTP
+exports.verifyOTP = async (req, res) => {
+    try {
+        const { email, otp } = req.body;
+        const user = await User.findOne({ 
+            email,
+            resetPasswordOTP: otp,
+            resetPasswordExpires: { $gt: Date.now() }
+        });
+
+        if (!user) {
+            return res.status(400).json({ success: false, message: 'Invalid or expired OTP' });
+        }
+
+        res.status(200).json({ success: true, message: 'OTP verified' });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+};
+
+// @desc    Reset Password
+exports.resetPassword = async (req, res) => {
+    try {
+        const { email, otp, password } = req.body;
+        const user = await User.findOne({ 
+            email,
+            resetPasswordOTP: otp,
+            resetPasswordExpires: { $gt: Date.now() }
+        });
+
+        if (!user) {
+            return res.status(400).json({ success: false, message: 'Invalid or expired OTP' });
+        }
+
+        // Set new password
+        user.password = password;
+        user.resetPasswordOTP = undefined;
+        user.resetPasswordExpires = undefined;
+        await user.save();
+
+        res.status(200).json({ success: true, message: 'Password reset successful' });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
     }
 };

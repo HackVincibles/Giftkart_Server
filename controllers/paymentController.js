@@ -147,6 +147,29 @@ const completeOrderTasks = async (order) => {
                     },
                     { upsert: true }
                 );
+
+                // 3. Establish initial chat message between buyer and creator
+                const Message = require('../models/Message');
+                await Message.create({
+                    order: order._id,
+                    sender: order.buyer,
+                    senderModel: 'User',
+                    recipient: product.creator,
+                    recipientModel: 'Seller',
+                    content: `Hello! I've just placed an order for "${product.name}". Looking forward to your beautiful work!`,
+                    read: false
+                });
+
+                // 4. Notify creator
+                const Notification = require('../models/Notification');
+                await Notification.create({
+                    seller: product.creator,
+                    type: 'order_confirmed',
+                    title: 'New Order Received! 🎁',
+                    message: `You have a new order #${order._id.toString().slice(-6).toUpperCase()} for ${product.name}.`,
+                    relatedOrder: order._id,
+                    priority: 'high'
+                });
             }
         }
 
@@ -378,7 +401,7 @@ exports.getOrder = async (req, res) => {
     try {
         const order = await Order.findById(req.params.id)
             .populate('buyer', 'displayName email')
-            .populate('products.product', 'name images basePrice');
+            .populate('products.product', 'name images basePrice creator');
 
         if (!order) {
             return res.status(404).json({ success: false, message: 'Order not found' });
@@ -403,7 +426,7 @@ exports.getUserOrders = async (req, res) => {
         const skip = (page - 1) * limit;
 
         const orders = await Order.find({ buyer: req.user._id })
-            .populate('products.product', 'name images')
+            .populate('products.product', 'name images creator')
             .sort({ createdAt: -1 })
             .skip(skip)
             .limit(limit);
