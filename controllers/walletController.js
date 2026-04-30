@@ -91,42 +91,68 @@ exports.verifyPayment = async (req, res) => {
 exports.requestWithdrawal = async (req, res) => {
     try {
         const { amount } = req.body;
-        const user = await User.findById(req.user.id);
-        const wallet = await Wallet.findOne({ user: req.user.id });
+        let bankDetails, currentBalance, accountId, accountType;
 
-        if (!wallet || wallet.balance < amount) {
-            return res.status(400).json({ message: 'Insufficient balance' });
+        // Check if seller (Seller Auth) or user (User Auth)
+        if (req.seller || (req.user && req.user.role === 'seller')) {
+            const sellerId = req.seller?._id || req.user._id;
+            const seller = await require('../models/Seller').findById(sellerId);
+            if (!seller) return res.status(404).json({ message: 'Seller profile not found' });
+            
+            bankDetails = seller.bankDetails;
+            currentBalance = seller.wallet.balance;
+            accountId = seller._id;
+            accountType = 'seller';
+
+            if (currentBalance < amount) return res.status(400).json({ message: 'Insufficient balance' });
+            if (!bankDetails || !bankDetails.accountNumber) return res.status(400).json({ message: 'Setup bank details first' });
+
+            // Deduct
+            seller.wallet.balance -= amount;
+            seller.wallet.pendingWithdrawals += amount;
+            await seller.save();
+        } else {
+            const user = await User.findById(req.user.id);
+            const wallet = await Wallet.findOne({ user: req.user.id });
+
+            if (!wallet || wallet.balance < amount) return res.status(400).json({ message: 'Insufficient balance' });
+            
+            bankDetails = user.creatorProfile?.bankDetails;
+            if (!bankDetails || (!bankDetails.accountNumber && !bankDetails.upiId)) {
+                return res.status(400).json({ message: 'Setup bank details in profile first' });
+            }
+
+            accountId = user._id;
+            accountType = 'user';
+            wallet.balance -= amount;
+            await wallet.save();
         }
 
-        if (!user.creatorProfile || !user.creatorProfile.bankDetails || (!user.creatorProfile.bankDetails.accountNumber && !user.creatorProfile.bankDetails.upiId)) {
-            return res.status(400).json({ message: 'Please setup bank details or UPI ID first' });
-        }
-
-        // 1. Create Payout Transaction (status: processing)
+        // Create Transaction
         const transaction = await Transaction.create({
-            wallet: wallet._id,
-            user: req.user.id,
+            [accountType]: accountId,
+            user: accountType === 'user' ? accountId : undefined,
+            seller: accountType === 'seller' ? accountId : undefined,
             type: 'payout',
             amount: amount,
             status: 'processing',
-            description: 'Withdrawal to Bank'
+            description: 'Withdrawal Request'
         });
 
-        // 2. Create Withdrawal Request
-        const withdrawal = await Withdrawal.create({
-            user: req.user.id,
-            wallet: wallet._id,
+        // Create Withdrawal record for Admin
+        await Withdrawal.create({
+            [accountType]: accountId,
+            user: accountType === 'user' ? accountId : undefined,
+            seller: accountType === 'seller' ? accountId : undefined,
             amount: amount,
-            bankDetails: user.creatorProfile.bankDetails,
-            transactionId: transaction._id
+            bankDetails: bankDetails,
+            transactionId: transaction._id,
+            status: 'pending'
         });
 
-        // 3. Deduct from wallet immediately to "hold" the funds
-        wallet.balance -= amount;
-        await wallet.save();
-
-        res.status(201).json({ success: true, withdrawal });
+        res.status(201).json({ success: true, message: 'Withdrawal request submitted' });
     } catch (err) {
+        console.error('Withdrawal Error:', err);
         res.status(500).json({ message: err.message });
     }
 };

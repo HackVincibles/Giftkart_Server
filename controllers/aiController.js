@@ -48,3 +48,49 @@ exports.getPersonalizationSuggestion = async (req, res) => {
         res.status(500).json({ success: false, message: 'AI failed to generate suggestion' });
     }
 };
+// Vibe-Code a new gift prototype
+exports.vibeCode = async (req, res) => {
+    try {
+        const { vibe } = req.body;
+        if (!vibe) {
+            return res.status(400).json({ success: false, message: 'Please provide a vibe description' });
+        }
+
+        const geminiService = require('../services/geminiService');
+        const prototype = await geminiService.vibeCodeGift(vibe);
+
+        res.json({
+            success: true,
+            prototype
+        });
+    } catch (error) {
+        console.error('Vibe-Code Error:', error);
+        res.status(500).json({ success: false, message: 'Failed to vibe-code gift' });
+    }
+};
+
+// Save a Vibe-coded concept to the database
+exports.saveVibeConcept = async (req, res) => {
+    try {
+        const { vibeInput, blueprint } = req.body;
+        const VibeConcept = require('../models/VibeConcept');
+
+        const newConcept = new VibeConcept({
+            buyer: req.user.id,
+            vibeInput,
+            blueprint,
+            status: 'sent'
+        });
+
+        await newConcept.save();
+
+        res.status(201).json({
+            success: true,
+            message: 'Concept sent to Artisan Studio',
+            concept: newConcept
+        });
+    } catch (error) {
+        console.error('Save Vibe Error:', error);
+        res.status(500).json({ success: false, message: 'Failed to send concept' });
+    }
+};

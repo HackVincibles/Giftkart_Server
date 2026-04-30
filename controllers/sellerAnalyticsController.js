@@ -1,10 +1,10 @@
 const Order = require('../models/Order');
 const Product = require('../models/Product');
-const Seller = require('../models/Seller');
+const User = require('../models/User');
 
 const getSellerDashboardAnalytics = async (req, res) => {
     try {
-        const sellerId = req.seller._id;
+        const sellerId = req.user._id;
         const { period = '30d' } = req.query;
 
         const startDate = new Date();
@@ -75,8 +75,8 @@ const getSellerDashboardAnalytics = async (req, res) => {
         ]);
 
         // 5. Seller overall stats
-        const seller = await Seller.findById(sellerId);
-        const activeProducts = seller.stats?.activeProducts || 0;
+        const user = await User.findById(sellerId);
+        const activeProducts = user.creatorProfile?.stats?.activeProducts || 0;
 
         res.json({
             success: true,
@@ -101,8 +101,8 @@ const getSellerDashboardAnalytics = async (req, res) => {
 
 const getSellerWallet = async (req, res) => {
     try {
-        const sellerId = req.seller._id;
-        const seller = await Seller.findById(sellerId);
+        const sellerId = req.user._id;
+        const user = await User.findById(sellerId);
         
         const Transaction = require('../models/Transaction');
         const transactions = await Transaction.find({ seller: sellerId }).sort({ createdAt: -1 }).limit(20);
@@ -110,9 +110,9 @@ const getSellerWallet = async (req, res) => {
         res.json({
             success: true,
             data: {
-                balance: seller.wallet?.balance || 0,
-                pendingWithdrawals: seller.wallet?.pendingWithdrawals || 0,
-                totalEarned: seller.wallet?.totalEarned || 0,
+                balance: user.creatorProfile?.wallet?.balance || 0,
+                pendingWithdrawals: user.creatorProfile?.wallet?.pendingWithdrawals || 0,
+                totalEarned: user.creatorProfile?.wallet?.totalEarned || 0,
                 transactions
             }
         });

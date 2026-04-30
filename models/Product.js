@@ -16,7 +16,7 @@ const ProductSchema = new mongoose.Schema({
     },
     creator: {
         type: mongoose.Schema.Types.ObjectId,
-        ref: 'Seller',
+        ref: 'User',
         required: true
     },
     basePrice: {

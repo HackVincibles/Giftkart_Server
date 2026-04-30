@@ -63,17 +63,44 @@ const UserSchema = new mongoose.Schema({
     },
     creatorProfile: {
         studioName: String,
+        businessName: String,
         bio: String,
         portfolioLinks: [String],
+        phone: String,
+        businessAddress: {
+            street: String,
+            city: String,
+            state: String,
+            pincode: String,
+            country: { type: String, default: 'India' }
+        },
+        panNumber: { type: String, uppercase: true },
+        gstNumber: { type: String, uppercase: true },
         isVerified: {
             type: Boolean,
             default: false
+        },
+        verificationStatus: {
+            type: String,
+            enum: ['pending', 'verified', 'rejected', 'suspended'],
+            default: 'pending'
         },
         bankDetails: {
             accountNumber: String,
             ifsc: String,
             bankName: String,
+            accountHolderName: String,
             upiId: String
+        },
+        stats: {
+            totalProducts: { type: Number, default: 0 },
+            totalOrders: { type: Number, default: 0 },
+            totalRevenue: { type: Number, default: 0 }
+        },
+        wallet: {
+            balance: { type: Number, default: 0 },
+            pendingWithdrawals: { type: Number, default: 0 },
+            totalEarned: { type: Number, default: 0 }
         }
     },
     isBlocked: {

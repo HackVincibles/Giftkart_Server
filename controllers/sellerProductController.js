@@ -1,5 +1,5 @@
 const Product = require('../models/Product');
-const Seller = require('../models/Seller');
+const User = require('../models/User');
 
 // Calculate final price with platform commission
 const calculateFinalPrice = (basePrice, commissionRate) => {
@@ -15,17 +15,18 @@ const calculateFinalPrice = (basePrice, commissionRate) => {
 // Create product
 const createProduct = async (req, res) => {
     try {
-        const seller = await Seller.findById(req.seller._id);
+        const user = await User.findById(req.user._id);
+        const creator = user.creatorProfile;
         
         // Strict verification gate — only admin-approved sellers can list products
-        if (!seller || seller.verificationStatus !== 'verified') {
+        if (!user || user.role !== 'creator' || creator.verificationStatus !== 'verified') {
             return res.status(403).json({
                 success: false,
-                message: seller?.verificationStatus === 'pending'
-                    ? 'Your seller account is pending admin approval. You will be notified once verified.'
-                    : seller?.verificationStatus === 'rejected'
-                    ? 'Your seller account has been rejected. Please contact support.'
-                    : 'Seller account not verified. Contact admin.'
+                message: creator?.verificationStatus === 'pending'
+                    ? 'Your creator account is pending admin approval. You will be notified once verified.'
+                    : creator?.verificationStatus === 'rejected'
+                    ? 'Your creator account has been rejected. Please contact support.'
+                    : 'Creator account not verified. Contact admin.'
             });
         }
 
@@ -34,12 +35,12 @@ const createProduct = async (req, res) => {
         // Calculate final price with commission
         const pricing = calculateFinalPrice(
             productData.pricing.base,
-            seller.commissionRate
+            creator.commissionRate || 15
         );
 
         const product = await Product.create({
             ...productData,
-            creator: seller._id,
+            creator: user._id,
             pricing: {
                 ...productData.pricing,
                 base: pricing.basePrice,
@@ -49,10 +50,9 @@ const createProduct = async (req, res) => {
             }
         });
 
-        // Update seller stats
-        seller.stats.totalProducts += 1;
-        seller.stats.activeProducts += 1;
-        await seller.save();
+        // Update creator stats
+        user.creatorProfile.stats.totalProducts += 1;
+        await user.save();
 
         res.status(201).json({
             success: true,
@@ -72,9 +72,10 @@ const createProduct = async (req, res) => {
 const updateProduct = async (req, res) => {
     try {
         const { productId } = req.params;
-        const seller = await Seller.findById(req.seller._id);
+        const user = await User.findById(req.user._id);
+        const creator = user.creatorProfile;
 
-        const product = await Product.findOne({ _id: productId, creator: seller._id });
+        const product = await Product.findOne({ _id: productId, creator: req.user._id });
 
         if (!product) {
             return res.status(404).json({
@@ -87,7 +88,7 @@ const updateProduct = async (req, res) => {
         if (req.body.pricing && req.body.pricing.base) {
             const pricing = calculateFinalPrice(
                 req.body.pricing.base,
-                seller.commissionRate
+                creator.commissionRate || 15
             );
             req.body.pricing = {
                 ...req.body.pricing,
@@ -119,9 +120,10 @@ const updateProduct = async (req, res) => {
 const getSellerProducts = async (req, res) => {
     try {
         const { page = 1, limit = 20, status } = req.query;
-        const seller = await Seller.findById(req.seller._id);
+        const user = await User.findById(req.user._id);
+        const creator = user.creatorProfile;
 
-        const filter = { creator: seller._id };
+        const filter = { creator: req.user._id };
         if (status) {
             filter.isActive = status === 'active';
         }
@@ -158,9 +160,10 @@ const getSellerProducts = async (req, res) => {
 const getProduct = async (req, res) => {
     try {
         const { productId } = req.params;
-        const seller = await Seller.findById(req.seller._id);
+        const user = await User.findById(req.user._id);
+        const creator = user.creatorProfile;
 
-        const product = await Product.findOne({ _id: productId, creator: seller._id });
+        const product = await Product.findOne({ _id: productId, creator: req.user._id });
 
         if (!product) {
             return res.status(404).json({
@@ -186,9 +189,10 @@ const getProduct = async (req, res) => {
 const deleteProduct = async (req, res) => {
     try {
         const { productId } = req.params;
-        const seller = await Seller.findById(req.seller._id);
+        const user = await User.findById(req.user._id);
+        const creator = user.creatorProfile;
 
-        const product = await Product.findOne({ _id: productId, creator: seller._id });
+        const product = await Product.findOne({ _id: productId, creator: req.user._id });
 
         if (!product) {
             return res.status(404).json({
@@ -203,8 +207,8 @@ const deleteProduct = async (req, res) => {
         await product.save();
 
         // Update seller stats
-        seller.stats.activeProducts -= 1;
-        await seller.save();
+        user.creatorProfile.stats.totalProducts = Math.max(0, (user.creatorProfile.stats.totalProducts || 0) - 1);
+        await user.save();
 
         res.json({
             success: true,
@@ -222,7 +226,8 @@ const deleteProduct = async (req, res) => {
 // Get seller's commission info
 const getCommissionInfo = async (req, res) => {
     try {
-        const seller = await Seller.findById(req.seller._id);
+        const user = await User.findById(req.user._id);
+        const creator = user.creatorProfile;
 
         res.json({
             success: true,
@@ -244,7 +249,8 @@ const getCommissionInfo = async (req, res) => {
 const calculatePricePreview = async (req, res) => {
     try {
         const { basePrice } = req.body;
-        const seller = await Seller.findById(req.seller._id);
+        const user = await User.findById(req.user._id);
+        const creator = user.creatorProfile;
 
         const pricing = calculateFinalPrice(basePrice, seller.commissionRate);
 
@@ -261,6 +267,59 @@ const calculatePricePreview = async (req, res) => {
     }
 };
 
+const getPendingSubmissions = async (req, res) => {
+    try {
+        const VibeConcept = require('../models/VibeConcept');
+        const submissions = await VibeConcept.find({ status: 'pending_publication' })
+            .populate('buyer', 'displayName avatar')
+            .sort({ updatedAt: -1 });
+
+        res.json({ success: true, data: submissions });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+const approveSubmission = async (req, res) => {
+    try {
+        const VibeConcept = require('../models/VibeConcept');
+        const { id } = req.params;
+        const { price, category, name } = req.body;
+        
+        const concept = await VibeConcept.findById(id).populate('buyer');
+        if (!concept) return res.status(404).json({ success: false, message: 'Submission not found' });
+
+        const user = await User.findById(req.user._id);
+        const pricing = calculateFinalPrice(price, user.creatorProfile?.commissionRate || 15);
+
+        // Transform Masterpiece into a Live Product
+        const product = await Product.create({
+            name: name || `Artisan Choice: ${concept.buyer?.displayName}'s Pick`,
+            description: `A photorealistic artisan hamper created for ${concept.buyer?.displayName}. Optimized for gift-giving with premium arrangement.`,
+            category: category || 'Curated Hampers',
+            images: [concept.canvasState.previewUrl],
+            creator: req.user._id,
+            artisanId: concept.buyer?._id, // Attribute to the creator
+            pricing: {
+                base: pricing.basePrice,
+                platformCommission: pricing.commission,
+                commissionRate: pricing.commissionRate,
+                final: pricing.finalPrice
+            },
+            isActive: true,
+            isArtisanMasterpiece: true, // Special tag
+            conceptId: concept._id
+        });
+
+        concept.status = 'published';
+        await concept.save();
+
+        res.json({ success: true, message: 'Masterpiece is now LIVE in the store!', data: product });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
 module.exports = {
     createProduct,
     updateProduct,
@@ -268,5 +327,7 @@ module.exports = {
     getProduct,
     deleteProduct,
     getCommissionInfo,
-    calculatePricePreview
+    calculatePricePreview,
+    getPendingSubmissions,
+    approveSubmission
 };

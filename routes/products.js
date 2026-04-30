@@ -34,7 +34,7 @@ router.get('/', generalLimiter, async (req, res) => {
         }
 
         const products = await Product.find(filter)
-            .populate('creator', 'businessName email isVerified')
+            .populate('creator', 'creatorProfile.businessName email creatorProfile.isVerified displayName')
             .sort({ createdAt: -1 })
             .skip(skip)
             .limit(limit);
@@ -62,7 +62,7 @@ router.get('/', generalLimiter, async (req, res) => {
 router.get('/:id', async (req, res) => {
     try {
         const product = await Product.findById(req.params.id)
-            .populate('creator', 'businessName email isVerified')
+            .populate('creator', 'creatorProfile.businessName email creatorProfile.isVerified displayName')
             .populate('reviews.user', 'displayName avatar');
 
         if (!product) {
@@ -256,7 +256,7 @@ router.get('/featured/list', async (req, res) => {
             isActive: true, 
             featured: true 
         })
-        .populate('creator', 'businessName email isVerified')
+        .populate('creator', 'creatorProfile.businessName email creatorProfile.isVerified displayName')
         .sort({ 'popularity.orders': -1 })
         .limit(10);
 
@@ -340,7 +340,7 @@ router.get('/search/advanced', searchLimiter, async (req, res) => {
         }
 
         const products = await Product.find(filter)
-            .populate('creator', 'businessName email isVerified')
+            .populate('creator', 'creatorProfile.businessName email creatorProfile.isVerified displayName')
             .sort(sortObj)
             .limit(20);
 
@@ -364,7 +364,7 @@ router.get('/social/wishlist', generalLimiter, async (req, res) => {
         // Aggregate products sorted by a popularity score
         // Score = (Orders * 2) + WishlistCount
         const products = await Product.find({ isActive: true })
-            .populate('creator', 'businessName email isVerified')
+            .populate('creator', 'creatorProfile.businessName email creatorProfile.isVerified displayName')
             .sort({ 
                 'popularity.orders': -1, 
                 'popularity.wishlistCount': -1 

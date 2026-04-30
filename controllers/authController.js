@@ -44,7 +44,7 @@ const sendToken = (user, statusCode, res) => {
 // @desc    Register user (Manual)
 exports.register = async (req, res) => {
     try {
-        const { displayName, email, password, role, referralCode } = req.body;
+        const { displayName, email, password, role, referralCode, phone, studioName } = req.body;
         console.log('Registration attempt:', { displayName, email, role });
 
         let user = await User.findOne({ email });
@@ -59,9 +59,18 @@ exports.register = async (req, res) => {
             email, 
             password, 
             role: role || 'buyer',
+            phoneNumber: phone,
             authMethod: 'local',
             buyerProfile: role === 'buyer' ? { preferences: [], interests: [], shippingAddress: {} } : undefined,
-            creatorProfile: role === 'creator' ? { studioName: '', bio: '', portfolioLinks: [], bankDetails: {} } : undefined
+            creatorProfile: role === 'creator' ? { 
+                studioName: studioName || '', 
+                businessName: studioName || displayName,
+                bio: '', 
+                portfolioLinks: [], 
+                bankDetails: {},
+                wallet: { balance: 0, pendingWithdrawals: 0, totalEarned: 0 },
+                stats: { totalProducts: 0, totalOrders: 0, totalRevenue: 0 }
+            } : undefined
         });
         console.log('User created successfully:', user._id, user.email, user.role);
         
@@ -224,6 +233,19 @@ exports.googleLoginClient = async (req, res) => {
             // Only update role if it's currently unassigned and a new role is requested
             if (user.role === 'unassigned' && role) {
                 user.role = role;
+                if (role === 'creator') {
+                    user.creatorProfile = { 
+                        studioName: payload.name + "'s Studio", 
+                        businessName: payload.name + "'s Studio",
+                        bio: '', 
+                        portfolioLinks: [], 
+                        bankDetails: {},
+                        wallet: { balance: 0, pendingWithdrawals: 0, totalEarned: 0 },
+                        stats: { totalProducts: 0, totalOrders: 0, totalRevenue: 0 }
+                    };
+                } else if (role === 'buyer') {
+                    user.buyerProfile = { preferences: [], interests: [], shippingAddress: {} };
+                }
             }
             await user.save();
         } else {
@@ -233,7 +255,17 @@ exports.googleLoginClient = async (req, res) => {
                 displayName: payload.name,
                 avatar: payload.picture,
                 authMethod: 'google',
-                role: role || 'buyer' // Default to buyer or selected role
+                role: role || 'buyer',
+                creatorProfile: role === 'creator' ? { 
+                    studioName: payload.name + "'s Studio", 
+                    businessName: payload.name + "'s Studio",
+                    bio: '', 
+                    portfolioLinks: [], 
+                    bankDetails: {},
+                    wallet: { balance: 0, pendingWithdrawals: 0, totalEarned: 0 },
+                    stats: { totalProducts: 0, totalOrders: 0, totalRevenue: 0 }
+                } : undefined,
+                buyerProfile: role === 'buyer' ? { preferences: [], interests: [], shippingAddress: {} } : undefined
             });
             
             // Initialize Wallet for new user
@@ -272,7 +304,17 @@ exports.setRole = async (req, res) => {
         user.role = role;
         
         if (role === 'buyer') user.buyerProfile = { preferences: [], interests: [], shippingAddress: {} };
-        if (role === 'creator') user.creatorProfile = { studioName: '', bio: '', portfolioLinks: [], bankDetails: {} };
+        if (role === 'creator') {
+            user.creatorProfile = { 
+                studioName: user.displayName + "'s Studio", 
+                businessName: user.displayName + "'s Studio",
+                bio: '', 
+                portfolioLinks: [], 
+                bankDetails: {},
+                wallet: { balance: 0, pendingWithdrawals: 0, totalEarned: 0 },
+                stats: { totalProducts: 0, totalOrders: 0, totalRevenue: 0 }
+            };
+        }
 
         await user.save();
 

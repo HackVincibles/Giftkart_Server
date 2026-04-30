@@ -31,14 +31,28 @@ app.use(hpp());
 app.use(mongoSanitize());
 
 // CORS
+const allowedOrigins = [
+    process.env.CLIENT_URL,
+    'http://localhost:5173',
+    'http://localhost:3000',
+    'http://localhost:3001',
+    'http://localhost:3002'
+].filter(Boolean);
+
 app.use(cors({
-    origin: process.env.CLIENT_URL,
+    origin: function (origin, callback) {
+        // In development, be more permissive to handle multiple local ports
+        if (!origin || allowedOrigins.includes(origin) || origin.startsWith('http://localhost:')) {
+            return callback(null, true);
+        }
+        return callback(new Error('CORS blocked'), false);
+    },
     credentials: true
 }));
 
 // Body parser
-app.use(express.json({ limit: '10kb' }));
-app.use(express.urlencoded({ extended: false, limit: '10kb' }));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: false, limit: '50mb' }));
 app.use(cookieParser());
 
 // Logging middleware

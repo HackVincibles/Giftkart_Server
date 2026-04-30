@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const {
     getDashboard,
+    requestPublication,
     getOrderQueue,
     updateOrderStatus,
     getOrderAISuggestions,
@@ -13,7 +14,9 @@ const {
     getNotifications,
     markNotificationRead,
     updateLogisticsSettings,
-    addTrackingInfo
+    addTrackingInfo,
+    getVibeRequestById,
+    saveCanvasState
 } = require('../controllers/creatorDashboardController');
 const { protect, authenticateSeller } = require('../middleware/auth');
 
@@ -130,5 +133,9 @@ Return only valid JSON array, no extra text.`;
         res.status(500).json({ success: false, message: 'Failed to generate ideas', error: error.message });
     }
 });
+
+router.get('/vibe-requests/:id', authenticateSeller, getVibeRequestById);
+router.post('/save-design/:id', authenticateSeller, saveCanvasState);
+router.post('/request-publication/:id', authenticateSeller, requestPublication);
 
 module.exports = router;

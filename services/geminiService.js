@@ -419,6 +419,51 @@ Return only the text response.`;
                 : "I couldn't find an exact match, but I've suggested some trending alternatives that might work!";
         }
     }
+
+    /**
+     * Vibe-Code a Gift Prototype
+     * Transforms a raw vibe into a structured artisan blueprint
+     * @param {string} vibe - The raw creative input from the buyer
+     * @returns {Promise<Object>} Detailed gift prototype
+     */
+    async vibeCodeGift(vibe) {
+        const prompt = `Act as an Elite Gift Designer. Transform this "vibe" into a detailed gift prototype: "${vibe}"
+
+Return ONLY valid JSON with these fields:
+{
+  "prototypeName": "A poetic, premium name for the gift",
+  "tagline": "A high-end one-sentence description",
+  "concept": "A deeper explanation of the artistic vision",
+  "materials": ["Material 1", "Material 2"],
+  "craftingSteps": ["Step 1", "Step 2"],
+  "aestheticPalette": ["Color 1", "Color 2"],
+  "suggestedPrice": "Estimated value in INR",
+  "vibeScore": "Number between 0 and 100"
+}
+
+Ensure the design feels unique, bespoke, and expensive.`;
+
+        try {
+            const response = await this.generateText(prompt);
+            const jsonMatch = response.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                return JSON.parse(jsonMatch[0]);
+            }
+            throw new Error("Failed to parse AI response");
+        } catch (error) {
+            console.error('Error vibe-coding gift:', error);
+            return {
+                prototypeName: "The Ethereal Echo",
+                tagline: "A manifestation of your unique vision.",
+                concept: "A custom-crafted piece designed to capture the essence of your description.",
+                materials: ["Premium Wood", "Glass", "Light"],
+                craftingSteps: ["Hand-carving base", "Integrating light elements", "Final polish"],
+                aestheticPalette: ["Midnight Blue", "Gold"],
+                suggestedPrice: "4,500",
+                vibeScore: 85
+            };
+        }
+    }
 }
 
 module.exports = new GeminiService();

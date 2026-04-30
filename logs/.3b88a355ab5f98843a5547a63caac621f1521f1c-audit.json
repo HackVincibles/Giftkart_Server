@@ -1,0 +1,15 @@
+{
+    "keep": {
+        "days": true,
+        "amount": 14
+    },
+    "auditLog": "/home/pineapple/Desktop/hackathon/giftkart/server/logs/.3b88a355ab5f98843a5547a63caac621f1521f1c-audit.json",
+    "files": [
+        {
+            "date": 1777496610850,
+            "name": "/home/pineapple/Desktop/hackathon/giftkart/server/logs/error-2026-04-30.log",
+            "hash": "d3d6c6dbacf93e3d05edc34961d525fbb777395cd2ce648c275058fa639527aa"
+        }
+    ],
+    "hashType": "sha256"
+}

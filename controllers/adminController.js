@@ -126,33 +126,34 @@ const getAllUsers = async (req, res) => {
     }
 };
 
-// Get all sellers
+// Get all creators (Sellers)
 const getAllSellers = async (req, res) => {
     try {
         const { page = 1, limit = 20, search, verificationStatus } = req.query;
 
-        const filter = {};
+        const filter = { role: 'creator' };
         if (search) {
             filter.$or = [
-                { businessName: { $regex: search, $options: 'i' } },
-                { email: { $regex: search, $options: 'i' } }
+                { displayName: { $regex: search, $options: 'i' } },
+                { email: { $regex: search, $options: 'i' } },
+                { 'creatorProfile.businessName': { $regex: search, $options: 'i' } }
             ];
         }
         if (verificationStatus) {
-            filter.verificationStatus = verificationStatus;
+            filter['creatorProfile.verificationStatus'] = verificationStatus;
         }
 
-        const sellers = await Seller.find(filter)
+        const creators = await User.find(filter)
             .sort({ createdAt: -1 })
             .skip((page - 1) * limit)
             .limit(parseInt(limit));
 
-        const total = await Seller.countDocuments(filter);
+        const total = await User.countDocuments(filter);
 
         res.json({
             success: true,
             data: {
-                sellers,
+                sellers: creators,
                 pagination: {
                     page: parseInt(page),
                     limit: parseInt(limit),
@@ -164,48 +165,51 @@ const getAllSellers = async (req, res) => {
     } catch (error) {
         res.status(500).json({
             success: false,
-            message: 'Error fetching sellers',
+            message: 'Error fetching creators',
             error: error.message
         });
     }
 };
 
-// Verify seller
+// Verify creator
 const verifySeller = async (req, res) => {
     try {
         const { sellerId } = req.params;
 
-        const seller = await Seller.findByIdAndUpdate(
-            sellerId,
-            { verificationStatus: 'verified', isVerified: true },
+        const creator = await User.findOneAndUpdate(
+            { _id: sellerId, role: 'creator' },
+            { 
+                'creatorProfile.verificationStatus': 'verified', 
+                'creatorProfile.isVerified': true 
+            },
             { new: true }
         );
 
-        if (!seller) {
+        if (!creator) {
             return res.status(404).json({
                 success: false,
-                message: 'Seller not found'
+                message: 'Creator not found'
             });
         }
 
         res.json({
             success: true,
-            message: 'Seller verified successfully',
-            data: seller
+            message: 'Creator verified successfully',
+            data: creator
         });
 
-        // Notify Seller via Email
+        // Notify Creator via Email
         await sendEmail({
-            email: seller.email,
+            email: creator.email,
             subject: 'Congratulations! Your Artisan Account is Verified - GiftKart',
             html: `
                 <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 10px;">
                     <h2 style="color: #8b5cf6;">Welcome to the Artisan Community!</h2>
-                    <p>Hello ${seller.ownerName},</p>
-                    <p>We are thrilled to inform you that your seller account for <b>${seller.businessName}</b> has been verified by our team.</p>
+                    <p>Hello ${creator.displayName},</p>
+                    <p>We are thrilled to inform you that your creator profile for <b>${creator.creatorProfile.businessName}</b> has been verified by our team.</p>
                     <p>You can now start listing your premium products and reaching thousands of gift-seekers on our platform.</p>
                     <div style="text-align: center; margin: 30px 0;">
-                        <a href="${process.env.CLIENT_URL}/seller-login" style="background: #8b5cf6; color: white; padding: 12px 25px; text-decoration: none; border-radius: 5px; font-weight: bold;">Go to Dashboard</a>
+                        <a href="${process.env.CLIENT_URL}/creator-dashboard" style="background: #8b5cf6; color: white; padding: 12px 25px; text-decoration: none; border-radius: 5px; font-weight: bold;">Go to Dashboard</a>
                     </div>
                     <p>Happy Gifting!</p>
                     <hr style="border: none; border-top: 1px solid #e2e8f0;" />
@@ -216,40 +220,43 @@ const verifySeller = async (req, res) => {
     } catch (error) {
         res.status(500).json({
             success: false,
-            message: 'Error verifying seller',
+            message: 'Error verifying creator',
             error: error.message
         });
     }
 };
 
-// Suspend seller
+// Suspend creator
 const suspendSeller = async (req, res) => {
     try {
         const { sellerId } = req.params;
         const { reason } = req.body;
 
-        const seller = await Seller.findByIdAndUpdate(
-            sellerId,
-            { isSuspended: true, suspensionReason: reason },
+        const creator = await User.findOneAndUpdate(
+            { _id: sellerId, role: 'creator' },
+            { 
+                'creatorProfile.isSuspended': true, 
+                'creatorProfile.suspensionReason': reason 
+            },
             { new: true }
         );
 
-        if (!seller) {
+        if (!creator) {
             return res.status(404).json({
                 success: false,
-                message: 'Seller not found'
+                message: 'Creator not found'
             });
         }
 
         res.json({
             success: true,
-            message: 'Seller suspended successfully',
-            data: seller
+            message: 'Creator suspended successfully',
+            data: creator
         });
     } catch (error) {
         res.status(500).json({
             success: false,
-            message: 'Error suspending seller',
+            message: 'Error suspending creator',
             error: error.message
         });
     }
@@ -751,29 +758,33 @@ const updateOrderStatus = async (req, res) => {
     }
 };
 
-// ─── Reject Seller ────────────────────────────────────────────
+// ─── Reject Creator ────────────────────────────────────────────
 
 const rejectSeller = async (req, res) => {
     try {
         const { sellerId } = req.params;
         const { reason } = req.body;
-        const seller = await Seller.findByIdAndUpdate(
-            sellerId,
-            { verificationStatus: 'rejected', isVerified: false, rejectionReason: reason || 'Did not meet platform requirements' },
+        const creator = await User.findOneAndUpdate(
+            { _id: sellerId, role: 'creator' },
+            { 
+                'creatorProfile.verificationStatus': 'rejected', 
+                'creatorProfile.isVerified': false, 
+                'creatorProfile.rejectionReason': reason || 'Did not meet platform requirements' 
+            },
             { new: true }
         );
-        if (!seller) return res.status(404).json({ success: false, message: 'Seller not found' });
-        res.json({ success: true, message: 'Seller rejected', data: seller });
+        if (!creator) return res.status(404).json({ success: false, message: 'Creator not found' });
+        res.json({ success: true, message: 'Creator rejected', data: creator });
 
-        // Notify Seller via Email
+        // Notify Creator via Email
         await sendEmail({
-            email: seller.email,
-            subject: 'Update regarding your Seller Application - GiftKart',
+            email: creator.email,
+            subject: 'Update regarding your Creator Application - GiftKart',
             html: `
                 <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 10px;">
-                    <h2 style="color: #ef4444;">Seller Application Update</h2>
-                    <p>Hello ${seller.ownerName},</p>
-                    <p>Thank you for your interest in joining GiftKart. After reviewing your application for <b>${seller.businessName}</b>, we regret to inform you that we cannot approve it at this time.</p>
+                    <h2 style="color: #ef4444;">Creator Application Update</h2>
+                    <p>Hello ${creator.displayName},</p>
+                    <p>Thank you for your interest in joining GiftKart as a creator. After reviewing your application for <b>${creator.creatorProfile.businessName}</b>, we regret to inform you that we cannot approve it at this time.</p>
                     <p><b>Reason:</b> ${reason || 'Application did not meet our current requirements.'}</p>
                     <p>If you believe this was an error or have updated your documents, you can contact our support team.</p>
                     <hr style="border: none; border-top: 1px solid #e2e8f0;" />
@@ -782,7 +793,7 @@ const rejectSeller = async (req, res) => {
             `
         });
     } catch (error) {
-        res.status(500).json({ success: false, message: 'Error rejecting seller', error: error.message });
+        res.status(500).json({ success: false, message: 'Error rejecting creator', error: error.message });
     }
 };
 

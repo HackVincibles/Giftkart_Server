@@ -3,32 +3,55 @@ const Customization = require('../models/Customization');
 const Order = require('../models/Order');
 const Product = require('../models/Product');
 const User = require('../models/User');
-const Seller = require('../models/Seller');
+const VibeConcept = require('../models/VibeConcept');
 
 // Get or create creator dashboard
 const getDashboard = async (req, res) => {
     try {
-        let dashboard = await CreatorDashboard.findOne({ creator: req.seller._id })
+        let dashboard = await CreatorDashboard.findOne({ creator: req.user._id })
             .populate('orderQueue.order')
             .populate('orderQueue.customization')
             .populate('orderQueue.order.buyer', 'displayName email phoneNumber');
 
+        const user = await User.findById(req.user._id);
+        const creator = user.creatorProfile;
+
         if (!dashboard) {
             dashboard = await CreatorDashboard.create({
-                creator: req.seller._id,
+                creator: req.user._id,
                 orderQueue: [],
-                earnings: { total: 0, pending: 0, available: 0, withdrawn: 0 },
-                performance: { totalOrders: 0, completedOrders: 0, averageRating: 0 },
+                earnings: { 
+                    total: creator.wallet?.totalEarned || 0, 
+                    pending: creator.wallet?.pendingWithdrawals || 0, 
+                    available: creator.wallet?.balance || 0, 
+                    withdrawn: 0 
+                },
+                performance: { 
+                    totalOrders: creator.stats?.totalOrders || 0, 
+                    completedOrders: creator.stats?.totalOrders || 0, 
+                    averageRating: 5 
+                },
                 demandInsights: { trendingGiftTypes: [], upcomingOccasions: [], searchTerms: [] }
             });
         }
 
-        const sellerInfo = await Seller.findById(req.seller._id);
+        // Fetch recent Vibe-Requests (Sent concepts that need a creator)
+        const vibeRequests = await VibeConcept.find({ status: 'sent' })
+            .populate('buyer', 'displayName avatar')
+            .sort({ createdAt: -1 })
+            .limit(10);
 
-        const pendingOrders = dashboard.orderQueue.filter(o => o.status === 'new' || o.status === 'in-progress').length;
-        const totalEarnings = dashboard.earnings.available; // or sellerInfo.wallet.balance
-        const totalOrdersSold = sellerInfo ? sellerInfo.stats.totalOrders : dashboard.performance.completedOrders;
-        const totalOrdersAmount = sellerInfo ? sellerInfo.stats.totalRevenue : dashboard.earnings.total;
+        // Fetch Artisan Masterpieces (Finalized designs)
+        const masterpieces = await VibeConcept.find({ 
+            'canvasState.previewUrl': { $exists: true, $ne: null }
+        })
+        .populate('buyer', 'displayName avatar')
+        .sort({ updatedAt: -1 });
+
+        const pendingOrders = (dashboard.orderQueue.filter(o => o.status === 'new' || o.status === 'in-progress').length) + vibeRequests.length;
+        const totalEarnings = creator.wallet?.balance || 0;
+        const totalOrdersSold = creator.stats?.totalOrders || 0;
+        const totalOrdersAmount = creator.wallet?.totalEarned || 0;
 
         res.json({
             success: true,
@@ -38,7 +61,9 @@ const getDashboard = async (req, res) => {
                 totalEarnings,
                 totalOrdersSold,
                 totalOrdersAmount,
-                rating: sellerInfo ? sellerInfo.averageRating : 0
+                rating: 5, // Mock rating or pull from profile if added
+                vibeRequests,
+                masterpieces
             }
         });
     } catch (error) {
@@ -47,6 +72,41 @@ const getDashboard = async (req, res) => {
             message: 'Error fetching dashboard',
             error: error.message
         });
+    }
+};
+
+const requestPublication = async (req, res) => {
+    try {
+        const concept = await VibeConcept.findByIdAndUpdate(
+            req.params.id,
+            { status: 'pending_publication' },
+            { new: true }
+        );
+        if (!concept) return res.status(404).json({ success: false, message: 'Masterpiece not found' });
+        res.json({ success: true, message: 'Publication request sent to Seller!', data: concept });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+};
+
+const saveCanvasState = async (req, res) => {
+    try {
+        const { elements, previewUrl } = req.body;
+        const concept = await VibeConcept.findByIdAndUpdate(
+            req.params.id,
+            { 
+                $set: { 
+                    'canvasState.elements': elements,
+                    'canvasState.previewUrl': previewUrl 
+                },
+                status: 'finalized' // Move to finalized instead of just 'realizing'
+            },
+            { new: true }
+        );
+        if (!concept) return res.status(404).json({ success: false, message: 'Concept not found' });
+        res.json({ success: true, message: 'Design finalized successfully', data: concept });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
     }
 };
 
@@ -561,8 +621,22 @@ const updateLogisticsSettings = async (req, res) => {
     }
 };
 
+const getVibeRequestById = async (req, res) => {
+    try {
+        const request = await VibeConcept.findById(req.params.id)
+            .populate('buyer', 'displayName avatar');
+        if (!request) return res.status(404).json({ success: false, message: 'Vibe request not found' });
+        res.json({ success: true, data: request });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+};
+
+
+
 module.exports = {
     getDashboard,
+    requestPublication,
     getOrderQueue,
     updateOrderStatus,
     addTrackingInfo,
@@ -574,5 +648,7 @@ module.exports = {
     updateAIAssistanceSettings,
     getNotifications,
     markNotificationRead,
-    updateLogisticsSettings
+    updateLogisticsSettings,
+    getVibeRequestById,
+    saveCanvasState
 };

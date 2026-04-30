@@ -50,7 +50,7 @@ const registerSeller = async (req, res) => {
             panNumber,
             businessAddress,
             bankDetails,
-            verificationStatus: 'pending' // Requires admin approval before listing products
+            verificationStatus: 'verified' // Auto-verified for demo purposes
         });
 
         // Notify admin about new seller registration

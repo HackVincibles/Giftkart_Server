@@ -7,7 +7,9 @@ const {
     getProduct,
     deleteProduct,
     getCommissionInfo,
-    calculatePricePreview
+    calculatePricePreview,
+    getPendingSubmissions,
+    approveSubmission
 } = require('../controllers/sellerProductController');
 const { authenticateSeller } = require('../middleware/auth');
 
@@ -18,6 +20,8 @@ router.post('/', createProduct);
 router.get('/', getSellerProducts);
 router.get('/commission-info', getCommissionInfo);
 router.post('/calculate-price', calculatePricePreview);
+router.get('/submissions', getPendingSubmissions);
+router.post('/approve-submission/:id', approveSubmission);
 router.get('/:productId', getProduct);
 router.put('/:productId', updateProduct);
 router.delete('/:productId', deleteProduct);
